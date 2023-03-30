@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: © Vegard IT GmbH (https://vegardit.com) and contributors
+# SPDX-FileContributor: Sebastian Thomschke, Vegard IT GmbH
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-ArtifactOfProjectHomePage: https://github.com/vegardit/scoop-portable
+#
+# https://docs.github.com/en/free-pro-team@latest/actions/reference/workflow-syntax-for-github-actions
+name: Build
+
+on:
+  push:
+    branches:    # build all branches
+    - '**'
+    tags-ignore: # but don't build tags
+    - '**'
+    paths-ignore:
+    - '**/*.adoc'
+    - '**/*.md'
+    - '.editorconfig'
+    - '.git*'
+    - '.github/*.yml'
+  pull_request:
+    paths-ignore:
+    - '**/*.adoc'
+    - '**/*.md'
+    - '.editorconfig'
+    - '.git*'
+    - '.github/*.yml'
+  workflow_dispatch:
+    # https://github.blog/changelog/2020-07-06-github-actions-manual-triggers-with-workflow_dispatch/
+
+defaults:
+  run:
+    shell: cmd
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - name: "SCM Checkout"
+      uses: actions/checkout@v3 #https://github.com/actions/checkout
+
+    - name: Create Windows user 'noadmin'
+      run: |
+        net user noadmin p@ssw0rd /add
+
+    - name: Install sudo
+      run: |
+       curl -sSfL https://github.com/chrisant996/sudo-windows/releases/download/v1.0.3/sudo-x64-v1.0.3.c01d18-exe.zip -o sudo.zip
+       unzip sudo.zip -d C:\Windows\System32
+
+    # https://github.com/poweradminllc/PAExec
+    #- name: Install paexec
+    #  run: curl -sSfL https://www.poweradmin.com/paexec/paexec.exe -o C:\Windows\System32\paexec.exe
+
+    - name: "Install: scoop-portable"
+      # installs scoop-portable as user "nonadmin"
+      run: |
+        cd tests
+        copy ..\scoop-portable.cmd .
+
+        :: paexec could be used as alternative to chris' sudo:
+        ::   paexec -u noadmin -p p@ssw0rd -w %CD% cmd /c scoop-portable.cmd ^>log.txt
+        ::   cat log.txt
+
+        echo p@ssw0rd| sudo -u noadmin --stdin cmd /c scoop-portable.cmd
+
+    - name: "Test: scoop-portable"
+      run: echo p@ssw0rd| sudo -u noadmin --stdin cmd /c "%CD%\tests\test-scoop.cmd"
+
+    - name: "Test: scoop-portable - different user and path"
+      # moves scoop-portable installation path and runs scoop-portable under different user
+      run: |
+        :: move scoop portable folder to another location
+        ren tests my_new_scoop_dir
+
+        :: load environment as different user (i.e. "runner")
+        my_new_scoop_dir\test-scoop.cmd
+
+    - name: "Test: scoop-portable - scoop update"
+      run: my_new_scoop_dir\test-update.cmd

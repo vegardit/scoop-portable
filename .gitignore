@@ -1,0 +1,44 @@
+# Local work folder that is not checked in
+_LOCAL/
+
+#scoop
+.portable
+apps
+buckets
+cache
+persist
+shims
+workspace
+tests/scoop-portable.cmd
+
+# Eclipse
+.settings/
+.project
+**/.*.md.html
+
+# IntelliJ
+.idea
+*.iml
+*.ipr
+*.iws
+
+# Eclipse Theia
+.theia
+
+# Visual Studio Code
+.vscode
+
+# OSX
+.DS_Store
+
+# Vim
+*.swo
+*.swp
+
+# Temp files
+.history
+*.tmp
+*.bak
+/dump
+/target
+/tools/dump
