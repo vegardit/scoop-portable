@@ -10,16 +10,24 @@
 
 ## <a name="what-is-it"></a>What is it?
 
-**scoop-portable** is an attempt to provide a true portable environment of the [scoop](https://scoop.sh/) command-line installer for the Windows Command Prompt.
+> **NOTE:** This project is _work-in-progress_, while it works fine with the apps we use, it may not yet work as expected with all apps installable via scoop. Pull requests are welcome!
 
-Notable differences to using "normal" scoop:
-- Disabled: Installation of global apps is disabled.
-- Disabled: Permanent changes to the PATH variable or setting of permanent environment variables by **scoop** is prevented.
-- Improved: installing/removing/resetting apps does not require restarting the command prompt
-- Improved: switching between different Java versions works seamlessly for the current and future sessions (https://github.com/ScoopInstaller/Java/wiki#switching-javas)
-- Improved: when installing git, all GNU commands at `apps\git\usr\bin` are made available on PATH, i.e. no need to install additional packages like `coreutils`, `tar`, `vim`
+**scoop-portable** is an attempt to provide a true portable, "non-invasive" environment of the [scoop](https://scoop.sh/) command-line installer for the Windows Command Prompt.
 
 For ease of distribution/use, it is implemented as a single self-contained Windows batch file.
+
+Advantages over using "regular" scoop:
+- the scoop directory can be moved and live on an USB stick/external disk
+- installing/removing/resetting apps does not require restarting the command prompt
+- switching between different Java versions works seamlessly for the current and future sessions (https://github.com/ScoopInstaller/Java/wiki#switching-javas)
+- when installing the git package, all GNU commands at `apps\git\usr\bin` are made available on PATH, i.e. no need to install additional packages like `coreutils`, `tar`, `vim`
+
+Limitations:
+- **scoop-portable** only works for the **Windows Command Prompt** and not for **PowerShell sessions**,
+  however using **scoop-portable** together with [clink](https://github.com/chrisant996/clink) (also installable via scoop) gives a great command line experience and productivity.
+- since the project strives for a purely portable environment, the following features/behaviours of **scoop** are disabled:
+  - installation of global apps is disabled.
+  - permanent changes to the global PATH variable or setting of permanent environment variables by **scoop** is prevented.
 
 ![install](docs/img/load.png)
 
@@ -48,6 +56,8 @@ For ease of distribution/use, it is implemented as a single self-contained Windo
 Once installed, subsequent executions of `scoop-portable.cmd` load scoop environment:
  - either in the current command window if executed from the command line, or
  - a new command window is opened if executed via Windows Explorer or e.g. a Desktop shortcut.
+
+An app installed in the `scoop-portable.cmd` can be launched from anywhere using: `scoop-portable.cmd <app> [app args]`
 
 
 ## <a name="license"></a>License
