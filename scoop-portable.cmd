@@ -518,28 +518,19 @@ goto :eof
 
   :: replacing '$env:USERPROFILE\.config' is a workaround for https://github.com/ScoopInstaller/Scoop/issues/4498
   ::   to make <USERPROFILE>\.config\scoop\config.json portable
-  :: appending functions add_first_in_path/ensure_in_path overwrites the original functions and prevents them from chaning the persistent PATH variable
+  ::
+  :: -replace '\n\s+env 'PATH'.*?\r?\n', '' to prevent persistent changes to global PATH variable in core.ps1
+  :: -replace '\n\s+env \$name.*?\r?\n', '' to prevent persistent changes to global PATH variable in install.ps1
   set patch_scoop=^
     Set-StrictMode -version latest; ^
-    $core_old = Get-Content -path '%SCOOP%\apps\scoop\current\lib\core.ps1' -raw; ^
-    $core_new = $core_old.replace('$env:XDG_CONFIG_HOME', '\"$env:SCOOP\.portable\"'); ^
-    if (-not $core_new.contains('function add_first_in_path($dir, $global) { }')) { ^
-       $core_new = $core_new + 'function add_first_in_path($dir, $global) { }' + """`n"""; ^
-    } ^
-    if (-not $core_new.contains('function ensure_in_path($dir, $global) { }')) { ^
-       $core_new = $core_new + 'function ensure_in_path($dir, $global) { }' + """`n"""; ^
-    } ^
-    if ($core_old -ne $core_new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\core.ps1' -value $core_new } ^
+    $new = $old = Get-Content -path '%SCOOP%\apps\scoop\current\lib\core.ps1' -raw; ^
+    $new = $new.replace('$env:XDG_CONFIG_HOME', '\"$env:SCOOP\.portable\"'); ^
+    $new = $new -replace '\n\s+env ''PATH''.*?\r?\n', ''; ^
+    if ($old -ne $new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\core.ps1' -value $new } ^
     ^
-    $install_old = Get-Content -path '%SCOOP%\apps\scoop\current\lib\install.ps1' -raw; ^
-    $install_new = $install_old; ^
-    if (-not $install_new.contains('function env_add_path($manifest, $dir, $global, $arch) { }')) { ^
-       $install_new = $install_new + 'function env_add_path($manifest, $dir, $global, $arch) { }' + """`n"""; ^
-    } ^
-    if (-not $install_new.contains('function env_set($manifest, $dir, $global, $arch) { }')) { ^
-       $install_new = $install_new + 'function env_set($manifest, $dir, $global, $arch) { }' + """`n"""; ^
-    } ^
-    if ($install_old -ne $install_new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\install.ps1' -value $install_new } ^
+    $new = $old = Get-Content -path '%SCOOP%\apps\scoop\current\lib\install.ps1' -raw; ^
+    $new = $new -replace '\n\s+env \$name.*?\r?\n', ''; ^
+    if ($old -ne $new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\install.ps1' -value $new } ^
     #
 
   powershell -noprofile -ex unrestricted -command "%patch_scoop%" || exit /B 1
