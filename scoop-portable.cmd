@@ -107,7 +107,7 @@ call :log_SUCCESS The portable scoop environment is ready.
 :: if scoop portable was launched with arguments, execute the arguments
 :: ==========================================================================
 if not "%~1" == "" (
-  cmd /C %*
+  %*
   goto :eof
 )
 
