@@ -163,7 +163,7 @@ goto :eof
   set SCOOP_BUCKETS=
 
   :: packages to install by default
-  set SCOOP_PACKAGES=7zip clink unzip wget zstd
+  set SCOOP_PACKAGES=
 
 
   :: ==========================================================================
@@ -541,6 +541,7 @@ goto :eof
     } ^
     if ($install_old -ne $install_new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\install.ps1' -value $install_new } ^
     #
+
   powershell -noprofile -ex unrestricted -command "%patch_scoop%" || exit /B 1
 goto :eof
 
