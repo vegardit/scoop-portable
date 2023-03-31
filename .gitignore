@@ -9,6 +9,7 @@ cache
 persist
 shims
 workspace
+scoop-portable-config.cmd
 tests/scoop-portable.cmd
 
 # Eclipse
