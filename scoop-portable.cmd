@@ -612,7 +612,7 @@ goto :eof
 
 :append_PATH <PATH>
   call :replace_substrings "%PATH%" "%~1;" "" PATH
-  call :ends_with "%PATH%" ";" && set "PATH=%PATH%%~1;" || set "PATH=%PATH;%%~1;"
+  call :ends_with "%PATH%" ";" && set "PATH=%PATH%%~1;" || set "PATH=%PATH%;%%~1;"
 goto :eof
 
 :extend_PATH <PATH>
