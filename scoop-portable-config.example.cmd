@@ -32,4 +32,5 @@ set SCOOP_PACKAGES=7zip ^
   upx ^
   yq ^
   wget ^
+  zip ^
   zstd
