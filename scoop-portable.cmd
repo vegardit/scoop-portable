@@ -569,8 +569,8 @@ goto :eof
   )
   endlocal & set "PATH=%PATH%"
 
-  for /F %%f in ('dir /B "%SCOOP%\.portable\active_versions\*.set_env.cmd" 2^>NUL') do (
-    endlocal & call %%f
+  for /F %%f in ('dir /B "%SCOOP%\.portable\active_versions\*.env_set.cmd" 2^>NUL') do (
+    endlocal & call "%SCOOP%\.portable\active_versions\%%f"
     setlocal
   )
 
