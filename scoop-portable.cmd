@@ -227,9 +227,11 @@ goto :eof
       if errorlevel 1 (
         call :log_TASK Installing [git]
         call "%SCOOP%\.portable\scoop.cmd" install git
+        call :extend_PATH "%SCOOP%\shims"
       ) else (
         call :log_TASK Installing [git-with-openssh]
         call "%SCOOP%\.portable\scoop.cmd" install git-with-openssh
+        call :extend_PATH "%SCOOP%\shims"
       )
     )
 
