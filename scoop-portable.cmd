@@ -263,17 +263,17 @@ goto :eof
 
   set fix_paths=^
     Set-StrictMode -version latest; ^
-    $curr_dir = (Get-Content -path '%SCOOP%\.portable\current.dir' -first 1).trim() + '\'; ^
-    $last_dir = (Get-Content -path '%SCOOP%\.portable\last.dir'    -first 1).trim() + '\'; ^
-    $last_dir_pattern = [regex]::escape($last_dir); ^
+    $last_dir = (Get-Content -path '%SCOOP%\.portable\last.dir' -first 1).trim() + '\'; ^
     ^
     function replaceScoopPaths($file_path) { ^
       if (Test-Path -path $file_path) { ^
         $old = Get-Content -path $file_path -raw; ^
-        $new = $old -replace $last_dir_pattern,$curr_dir; ^
-        if ($old -ne $new) { ^
-          Write-Host "[$(Get-Date -Format 'HH:mm:ss,ff')] --^> Path updated in: $file_path"; ^
-          Set-Content -noNewline -path $file_path -value $new; ^
+        if (-not [string]::IsNullOrEmpty($old)) { ^
+          $new = $old.replace($last_dir, '%SCOOP%\'); ^
+          if ($old -ne $new) { ^
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss,ff')] --^> Path updated in: $file_path"; ^
+            Set-Content -noNewline -path $file_path -value $new; ^
+          } ^
         } ^
       } ^
     } ^
