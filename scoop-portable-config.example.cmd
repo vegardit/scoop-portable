@@ -13,7 +13,7 @@ set PROXY_USER=
 set PROXY_PASSWORD=
 
 :: additional scoop buckets to register by default
-set SCOOP_BUCKETS=extras java
+set SCOOP_BUCKETS=extras java sysinternals
 
 :: packages to install by default
 set SCOOP_PACKAGES=7zip ^
@@ -27,10 +27,30 @@ set SCOOP_PACKAGES=7zip ^
   netcat ^
   nodejs-lts ^
   openssl-mingw ^
-  pulumi ^
   unzip ^
   upx ^
   yq ^
   wget ^
   zip ^
-  zstd
+  zstd ^
+  ^
+  pskill ^
+  pslist ^
+  psshutdown ^
+  ^
+  temurin8-jdk ^
+  temurin11-jdk ^
+  graalvm-jdk17 ^
+  ^
+  haxe ^
+  hashlink ^
+  neko ^
+  python ^
+  ^
+  act ^
+  k6 ^
+  k9s ^
+  kubectl ^
+  kustomize ^
+  packer ^
+  pulumi
