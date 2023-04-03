@@ -571,10 +571,12 @@ goto :eof
   )
   endlocal & set "PATH=%PATH%"
 
+  setlocal
   for /F %%f in ('dir /B "%SCOOP%\.portable\active_versions\*.env_set.cmd" 2^>NUL') do (
     endlocal & call "%SCOOP%\.portable\active_versions\%%f"
     setlocal
   )
+  endlocal
 
   if exist "%SCOOP%\apps\clink\current\clink.bat" (
     set "CLINK_PROFILE=%SCOOP%\persist\clink"
@@ -603,7 +605,7 @@ goto :eof
 
 :append_PATH <PATH>
   call :replace_substrings "%PATH%" "%~1;" "" PATH
-  call :ends_with "%PATH%" ";" && set "PATH=%PATH%%~1;" || set "PATH=%PATH%;%%~1;"
+  call :ends_with "%PATH%" ";" && set "PATH=%PATH%%~1;" || set "PATH=%PATH%;%~1;"
 goto :eof
 
 :extend_PATH <PATH>
