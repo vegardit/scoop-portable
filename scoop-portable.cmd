@@ -458,7 +458,7 @@ goto :eof
     if ('env_set' -in $app_manifest.PSobject.Properties.Name) { ^
       $app_manifest.env_set.PSObject.Properties ^| ForEach-Object { ^
         $env_key = $_.Name; ^
-        $env_val = $_.Value.replace('$dir', '%SCOOP%\shims\%app_name%\current').replace('$persist_dir', '%SCOOP%\persist\%app_name%'); ^
+        $env_val = $_.Value.replace('$dir', '%SCOOP%\apps\%app_name%\current').replace('$persist_dir', '%SCOOP%\persist\%app_name%'); ^
         if ($env_key -eq 'JAVA_HOME') { ^
           Get-ChildItem -path '%SCOOP%\.portable\active_versions\*.JAVA_HOME.env_set.cmd' ^| ForEach-Object { ^
             $jdk_name = $_.Name.split('.JAVA_HOME')[0]; ^
@@ -587,12 +587,10 @@ goto :eof
   )
 
   if exist "%SCOOP%\apps\git-with-openssh\current\git-cmd.exe" (
-    set "GIT_INSTALL_ROOT=%SCOOP%\apps\git-with-openssh\current"
     call :append_PATH "%SCOOP%\apps\git-with-openssh\current\usr\bin"
     where /Q vi.exe || doskey vi=vim
   ) else if exist "%SCOOP%\apps\git\current\git-cmd.exe" (
-    set "GIT_INSTALL_ROOT=%SCOOP%\apps\git\current"
-    call :append_PATH "%SCOOP%\apps\git\\currentusr\bin"
+    call :append_PATH "%SCOOP%\apps\git\current\usr\bin"
     where /Q vi.exe || doskey vi=vim
   )
 goto :eof
