@@ -6,6 +6,7 @@ _LOCAL/
 apps
 buckets
 cache
+modules
 persist
 shims
 workspace
