@@ -533,6 +533,15 @@ goto :eof
     $new = $old = Get-Content -path '%SCOOP%\apps\scoop\current\lib\install.ps1' -raw; ^
     $new = $new -replace '\n\s+env \$name.*?\r?\n', ''; ^
     if ($old -ne $new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\install.ps1' -value $new } ^
+    ^
+    $new = $old = Get-Content -path '%SCOOP%\apps\scoop\current\lib\shortcuts.ps1' -raw; ^
+    if (-not $new.contains('function create_startmenu_shortcuts($manifest, $dir, $global, $arch) { }')) { ^
+       $new = $new + 'function create_startmenu_shortcuts($manifest, $dir, $global, $arch) { }' + """`n"""; ^
+    } ^
+    if (-not $new.contains('function startmenu_shortcut([System.IO.FileInfo] $target, $shortcutName, $arguments, [System.IO.FileInfo]$icon, $global) { }')) { ^
+       $new = $new + 'function startmenu_shortcut([System.IO.FileInfo] $target, $shortcutName, $arguments, [System.IO.FileInfo]$icon, $global) { }' + """`n"""; ^
+    } ^
+    if ($old -ne $new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\shortcuts.ps1' -value $new } ^
     #
 
   powershell -noprofile -ex unrestricted -command "%patch_scoop%" || exit /B 1
@@ -549,6 +558,7 @@ goto :eof
     pushd "%SCOOP%\apps\scoop\current"
       git checkout "lib\core.ps1"
       git checkout "lib\install.ps1"
+      git checkout "lib\shortcuts.ps1"
     popd
   )
 goto :eof
