@@ -18,39 +18,55 @@ set SCOOP_BUCKETS=extras java sysinternals
 :: packages to install by default
 set SCOOP_PACKAGES=7zip ^
   bc ^
-  clink ^
   cwrsync ^
   far ^
-  gpg ^
   git-with-openssh ^
+  gsudo ^
   jq ^
   netcat ^
   nodejs-lts ^
   openssl-mingw ^
-  unzip ^
+  pskill ^
+  pslist ^
+  psshutdown ^
+  python ^
   upx ^
   yq ^
   wget ^
   zip ^
-  zstd ^
-  ^
-  pskill ^
-  pslist ^
-  psshutdown ^
-  ^
-  temurin8-jdk ^
-  temurin11-jdk ^
-  graalvm-jdk17 ^
-  ^
-  haxe ^
-  hashlink ^
-  neko ^
-  python ^
-  ^
+  zstd
+
+:: install terminal extensions
+set SCOOP_PACKAGES=%SCOOP_PACKAGES% ^
+  clink ^
+  clink-completions ^
+  clink-flex-prompt ^
+  conemu
+
+:: install DevOps tools
+set SCOOP_PACKAGES=%SCOOP_PACKAGES% ^
+  ab ^
   act ^
+  ctop ^
+  gh ^
   k6 ^
   k9s ^
   kubectl ^
   kustomize ^
+  lazydocker ^
   packer ^
   pulumi
+
+:: install Java runtimes and tools
+set SCOOP_PACKAGES=%SCOOP_PACKAGES% ^
+  temurin8-jdk ^
+  temurin11-jdk ^
+  graalvm-jdk17 ^
+  maven ^
+  keystore-explorer
+
+:: install Haxe compiler and runtimes
+set SCOOP_PACKAGES=%SCOOP_PACKAGES% ^
+  haxe ^
+  hashlink ^
+  neko
