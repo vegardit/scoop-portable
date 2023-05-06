@@ -351,6 +351,7 @@ goto :eof
       call :unpatch_scoop
       set "XDG_CONFIG_HOME=%SCOOP%\.portable"
     )
+    call :getx_PATH PATH_BEFORE_UPDATE
     call "%SCOOP%\shims\scoop.cmd" %*
     set rc=!errorlevel!
     if !app_name! == scoop (
@@ -359,6 +360,11 @@ goto :eof
       REM /%* makes the first arg (the command) a flag so it is not treated as an app name
       call :get_positional_args apps /%*
       for %%a in (!apps!) do call :save_active_version %%a
+    )
+    call :getx_PATH PATH_AFTER_UPDATE
+    if not "!PATH_BEFORE_UPDATE!"=="!PATH_AFTER_UPDATE!" (
+      call :log_TASK Restoring PATH variable
+      setx PATH  "!PATH_BEFORE_UPDATE!"
     )
     exit /B !rc!
   )
@@ -534,6 +540,10 @@ goto :eof
     $new = $new -replace '\n\s+env \$name.*?\r?\n', ''; ^
     if ($old -ne $new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\install.ps1' -value $new } ^
     ^
+    $new = $old = Get-Content -path '%SCOOP%\apps\scoop\current\lib\psmodules.ps1' -raw; ^
+    $new = $new -replace '\n\s+env ''psmodulepath''.*?\r?\n', ''; ^
+    if ($old -ne $new) { Set-Content -noNewline -path '%SCOOP%\apps\scoop\current\lib\psmodules.ps1' -value $new } ^
+    ^
     $new = $old = Get-Content -path '%SCOOP%\apps\scoop\current\lib\shortcuts.ps1' -raw; ^
     if (-not $new.contains('function create_startmenu_shortcuts($manifest, $dir, $global, $arch) { }')) { ^
        $new = $new + 'function create_startmenu_shortcuts($manifest, $dir, $global, $arch) { }' + """`n"""; ^
@@ -556,9 +566,7 @@ goto :eof
   if exist "%SCOOP%\apps\scoop\current\.git" (
     call :log_TASK Reverting scoop patch
     pushd "%SCOOP%\apps\scoop\current"
-      git checkout "lib\core.ps1"
-      git checkout "lib\install.ps1"
-      git checkout "lib\shortcuts.ps1"
+      git checkout "lib\*.ps1"
     popd
   )
 goto :eof
@@ -633,6 +641,16 @@ goto :eof
   )
   %SystemRoot%\System32\timeout.exe /T 30
 exit /B 1
+
+:getx_PATH <RESULT_VAR>
+  :: counterpart to "setx PATH" command
+  setlocal
+  set result_var=%~1
+  for /F "tokens=2* skip=2" %%a in ('reg query "HKEY_CURRENT_USER\Environment" /v PATH') do (
+    set "value=%%b"
+  )
+  endlocal & set "%result_var%=%value%"
+goto :eof
 
 
 :: ============================================================================

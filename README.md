@@ -27,6 +27,7 @@ Limitations:
   however using **scoop-portable** together with [clink](https://github.com/chrisant996/clink) (also installable via scoop) gives a great command line experience and productivity.
 - since the project strives for a purely portable environment, the following features/behaviours of **scoop** are disabled:
   - installation of global apps is disabled.
+  - creation of start-menu entries.
   - permanent changes to the global PATH variable or setting of permanent environment variables by **scoop** is prevented.
 
 ![install](docs/img/load.png)
