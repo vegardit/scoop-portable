@@ -356,6 +356,8 @@ goto :eof
     set rc=!errorlevel!
     if !app_name! == scoop (
       call :patch_scoop
+    ) else if "!app_name!" == "*" (
+      call :save_active_versions
     ) else (
       REM /%* makes the first arg (the command) a flag so it is not treated as an app name
       call :get_positional_args apps /%*
@@ -425,6 +427,15 @@ goto :eof
   :: ==========================================================================
   call "%SCOOP%\shims\scoop.cmd" %*
   exit /B %errorlevel%
+goto :eof
+
+
+
+:save_active_versions
+  setlocal
+  for /F %%f in ('dir /B "%SCOOP%\apps\*" 2^>NUL') do (
+    call :save_active_version %%~f
+  )
 goto :eof
 
 
@@ -769,13 +780,28 @@ goto :eof
 :: arg parsing
 :: ============================================================================
 
-:has_arg <ARG_VALUE>
+:has_arg <SEARCH_FOR> <ARG,...>
   setlocal
-  set flag=%~1
-  for %%a in (skipFirst%*) do (
-    if "%%~a"=="%flag%" exit /B 0
-  )
-exit /B 1
+  set "search_for=%~1" & shift /1
+  set empty_args=0
+
+  REM not using "for %%a in (%*)" which automatically expands wildcard arguments
+  :has_arg___CHECK_NEXT_ARG
+    set "arg=%~1"
+    if "%arg%" == "%search_for%" exit /B 0
+    if "%arg%" == "" (
+      REM stop looping if more than 6 empty args in a row were found. this is a workaround for the fact that one cannot
+      REM distinguish between an empty "" argument and the end of the argument list
+      if %empty_args% == 6 (
+        exit /B 1
+      ) else (
+        set /a empty_args+=1
+      )
+    ) else (
+      set empty_args=0
+    )
+    shift /1
+    goto :has_arg___CHECK_NEXT_ARG
 
 
 :get_positional_args <RESULT_VAR>
@@ -808,20 +834,22 @@ goto :eof
 
 :get_nth_positional_arg <ARG_INDEX> <RESULT_VAR> <ARG,...>
   setlocal EnableDelayedExpansion
-  set wanted_pos_arg_index=%~1
-  set result_var=%~2
-  set current_pos_arg_index=-2
-  for %%a in (%*) do (
-    set a=%%~a
-    set first_char=!a:~0,1!
-    if not "!first_char!" == "-" (
-      if not "!first_char!" == "/" (
-        set /A current_pos_arg_index=!current_pos_arg_index!+1
-        if !current_pos_arg_index! equ %wanted_pos_arg_index% (
-          endlocal & set "%result_var%=%%a"
-          exit /B 0
-        )
+  set "wanted_pos_arg_index=%~1" & shift /1
+  set "result_var=%~1" & shift /1
+  set current_pos_arg_index=0
+
+  REM not using "for %%a in (%*)" which automatically expands wildcard arguments
+  :get_nth_positional_arg___CHECK_NEXT_ARG
+    set "arg=%~1"
+    set first_char=%arg:~0,1%
+    if not "%first_char%" == "-" (
+      if not "%first_char%" == "/" (
+         set /A current_pos_arg_index=%current_pos_arg_index%+1
+         if !current_pos_arg_index! equ %wanted_pos_arg_index% (
+           endlocal & set "%result_var%=%arg%"
+           exit /B 0
+         )
       )
     )
-  )
-goto :eof
+    shift /1
+    goto :get_nth_positional_arg___CHECK_NEXT_ARG
