@@ -148,15 +148,16 @@ goto :eof
   :: ==========================================================================
   setlocal EnableDelayedExpansion
 
-  ::set PROXY=http://myproxy.local:8080
-  set PROXY=
+  ::set SCOOP_PROXY=<HOSTNAME>:<PORT>
+  ::set SCOOP_PROXY=myproxy.local:8080
+  set SCOOP_PROXY=
 
   :: if set to true the Windows credentials of the logged-in user are used for proxy authentication
-  set PROXY_USE_WINDOWS_CREDENTIALS=false
+  set SCOOP_PROXY_USE_WINDOWS_CREDENTIALS=false
 
   :: if PROXY_USE_WINDOWS_CREDENTIALS is set to false, then use these credentials for proxy authentication
-  set PROXY_USER=
-  set PROXY_PASSWORD=
+  set SCOOP_PROXY_USER=
+  set SCOOP_PROXY_PASSWORD=
 
   :: additional scoop buckets to register by default
   :: set SCOOP_BUCKETS=extras java
@@ -191,8 +192,8 @@ goto :eof
   :: ==========================================================================
   :: https://github.com/lukesampson/scoop/wiki/Using-Scoop-behind-a-proxy
   if not "%SCOOP_PROXY%" == "" (
-    call :log_TASK Downloading scoop installer using proxy %SCOOP_PROXY%
-    set "scoopProxy=[net.webrequest]::defaultwebproxy = new-object net.webproxy '%SCOOP_PROXY%';"
+    call :log_TASK Downloading scoop installer using proxy [%SCOOP_PROXY%]
+    set "scoopProxy=[net.webrequest]::defaultwebproxy = new-object net.webproxy 'http://%SCOOP_PROXY%';"
     if "%SCOOP_PROXY_USE_WINDOWS_CREDENTIALS%" == "true" (
       set "scoopProxy=!scoopProxy!; [net.webrequest]::defaultwebproxy.credentials = [net.credentialcache]::defaultcredentials;"
     ) else if not "%SCOOP_PROXY_USER%" == "" (
@@ -210,7 +211,9 @@ goto :eof
     $installer_script = (New-Object System.Net.WebClient).DownloadString('https://get.scoop.sh'); ^
     $installer_script = $installer_script.replace('$env:XDG_CONFIG_HOME', '\"$env:SCOOP\.portable\"'); ^
     $installer_script = $installer_script -replace '\s\s+Add-ShimsDirToPath', ''; ^
-    Invoke-Expression $installer_script || exit /B 1
+    Set-Content -Path "$env:TEMP\scoop_installer.ps1" -Value $installer_script || exit /B 1
+  powershell -noprofile -File "%TEMP%\scoop_installer.ps1" || exit /B 1
+  del "%TEMP%\scoop_installer.ps1"
 
   call :patch_scoop
 
@@ -218,6 +221,10 @@ goto :eof
   copy /Y "%~f0" "%SCOOP%\.portable\scoop.cmd" >NUL
 
   echo %USERDOMAIN%\%USERNAME%>"%SCOOP%\.portable\last.user"
+
+  if not "%SCOOP_PROXY%" == "" (
+    call "%SCOOP%\.portable\scoop.cmd" config proxy %SCOOP_PROXY% || exit /B 1
+  )
 
   if not "%SCOOP_BUCKETS%" == "" (
     REM install git if not present - required for adding buckets
