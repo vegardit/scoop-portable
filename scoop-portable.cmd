@@ -139,7 +139,7 @@ goto :eof
 
   call :log_HEADER Installing [scoop] at [%SCOOP%]...
   where /Q scoop && (
-    goto :exit_with_ERROR Cannot install scoop, 'scoop' command already on PATH
+    call :exit_with_ERROR Cannot install scoop, 'scoop' command already on PATH
   )
 
   :: https://github.com/ScoopInstaller/Scoop/wiki/Quick-Start#installing-scoop
@@ -378,7 +378,7 @@ goto :eof
     call :has_arg --global %* && set global_install=true
     call :has_arg -g %* && set global_install=true
     if "!global_install!" == "true" (
-      goto :exit_with_ERROR Installing applications globally is not supported by scoop-portable.
+      call :exit_with_ERROR Installing applications globally is not supported by scoop-portable.
     )
 
     call "%SCOOP%\shims\scoop.cmd" %*
@@ -652,6 +652,7 @@ goto :eof
   )
   %SystemRoot%\System32\timeout.exe /T 30
 exit /B 1
+
 
 :getx_PATH <RESULT_VAR>
   :: counterpart to "setx PATH" command
