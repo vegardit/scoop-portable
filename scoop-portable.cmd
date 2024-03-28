@@ -299,8 +299,10 @@ goto :eof
       if ($app_name -eq 'scoop') { return; } ^
       $app_manifest = Get-Content -path "%SCOOP%\.portable\active_versions\$app_name.json" -raw ^| ConvertFrom-Json; ^
       $app_curr_ver = $app_manifest.version; ^
-      fsutil reparsepoint delete $app_curr_ver_path ^| out-null; ^
-      Remove-Item $app_curr_ver_path -recurse -force; ^
+      if (Test-Path -Path $app_curr_ver_path) { ^
+        fsutil reparsepoint delete $app_curr_ver_path ^| out-null; ^
+        Remove-Item $app_curr_ver_path -recurse -force; ^
+      } ^
       New-Item -itemType Junction -path $app_curr_ver_path -target "%SCOOP%\apps\$app_name\$app_curr_ver" ^| out-null; ^
       Write-Host "[$(Get-Date -Format 'HH:mm:ss,ff')] --^> Junction updated: $app_curr_ver_path"; ^
       ^
@@ -322,6 +324,7 @@ goto :eof
     } ^
     ^
     Get-ChildItem '%SCOOP%\apps\*\*' -directory -filter current ^| Foreach-Object { fixAppCurrentVersionSymlinks $_ }; ^
+    Get-ChildItem '%SCOOP%\apps\*' -directory ^| Where-Object { -not (Test-Path '$_\current') } ^| Foreach-Object { fixAppCurrentVersionSymlinks ([System.IO.DirectoryInfo](Join-Path $_.FullName 'current')) }; ^
     #
 
   powershell -noprofile -ex unrestricted -command "%fix_paths%" || exit /B 1
