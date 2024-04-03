@@ -44,9 +44,10 @@ Limitations:
          ```batch
          git clone https://github.com/vegardit/scoop-portable C:\apps\scoop-portable
          ```
-1. (Optional) Customize the installation by creating a file called `scoop-portable-config.cmd` in the same directory.
+2. (Optional) Customize the installation by creating a file called `scoop-portable-config.cmd` in the same directory.
     See [scoop-portable-config.example.cmd](scoop-portable-config.example.cmd) as an example.
-1. Now execute `scoop-portable.cmd`.
+3. Make sure the line break type is set to Windows (CR LF) via programs such as Notepad++ to prevent errors such as `The syntax of the command is incorrect`.
+4. Now execute `scoop-portable.cmd`.
    - On the first execution, scoop and the selected packages will be installed in a `scoop` sub-directory and the scoop environment is initialized.
 
 ![install](docs/img/install.png)
