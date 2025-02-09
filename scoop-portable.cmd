@@ -8,7 +8,6 @@
 :: =====
 :: This is a self-contained Windows batch file to install and launch a portable scoop (https://github.com/lukesampson/scoop) environment.
 
-
 :: ############################################################################
 :: act as wrapper for shims\scoop.cmd if this batch file is located at [scoop_install_root]\.portable\scoop.cmd
 :: ############################################################################
@@ -191,13 +190,15 @@ goto :eof
   call :log_TASK Downloading scoop installer
   :: ==========================================================================
   :: https://github.com/lukesampson/scoop/wiki/Using-Scoop-behind-a-proxy
-  if not "%SCOOP_PROXY%" == "" (
+  if defined SCOOP_PROXY (
     call :log_TASK Downloading scoop installer using proxy [%SCOOP_PROXY%]
     set "scoopProxy=[net.webrequest]::defaultwebproxy = new-object net.webproxy 'http://%SCOOP_PROXY%';"
     if "%SCOOP_PROXY_USE_WINDOWS_CREDENTIALS%" == "true" (
       set "scoopProxy=!scoopProxy!; [net.webrequest]::defaultwebproxy.credentials = [net.credentialcache]::defaultcredentials;"
-    ) else if not "%SCOOP_PROXY_USER%" == "" (
-      set "scoopProxy=!scoopProxy!; [net.webrequest]::defaultwebproxy.credentials = new-object net.networkcredential '%SCOOP_PROXY_USER%', '%SCOOP_PROXY_PASSWORD%';"
+    ) else (
+      if defined SCOOP_PROXY_USER (
+        set "scoopProxy=!scoopProxy!; [net.webrequest]::defaultwebproxy.credentials = new-object net.networkcredential '%SCOOP_PROXY_USER%', '%SCOOP_PROXY_PASSWORD%';"
+      )
     )
   )
 
@@ -222,11 +223,20 @@ goto :eof
 
   echo %USERDOMAIN%\%USERNAME%>"%SCOOP%\.portable\last.user"
 
-  if not "%SCOOP_PROXY%" == "" (
-    call "%SCOOP%\.portable\scoop.cmd" config proxy %SCOOP_PROXY% || exit /B 1
+  :: https://github.com/ScoopInstaller/Scoop/wiki/Using-Scoop-behind-a-proxy
+  if defined SCOOP_PROXY (
+    if "%SCOOP_PROXY_USE_WINDOWS_CREDENTIALS%" == "true" (
+       call "%SCOOP%\.portable\scoop.cmd" config proxy currentuser@%SCOOP_PROXY% || exit /B 1
+    ) else (
+      if defined SCOOP_PROXY_USER (
+        call "%SCOOP%\.portable\scoop.cmd" config proxy %SCOOP_PROXY_USER%:%SCOOP_PROXY_USER%@%SCOOP_PROXY% || exit /B 1
+      ) else (
+        call "%SCOOP%\.portable\scoop.cmd" config proxy %SCOOP_PROXY% || exit /B 1
+      )
+    )
   )
 
-  if not "%SCOOP_BUCKETS%" == "" (
+  if defined SCOOP_BUCKETS (
     REM install git if not present - required for adding buckets
     where /Q git.exe
     if errorlevel 1 (
@@ -248,7 +258,7 @@ goto :eof
     )
   )
 
-  if not "%SCOOP_PACKAGES%" == "" (
+  if defined SCOOP_PACKAGES (
     call :log_TASK Installing packages [%SCOOP_PACKAGES%]
     setlocal
     for %%p in (%SCOOP_PACKAGES%) do (
