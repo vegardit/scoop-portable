@@ -180,7 +180,7 @@ goto :eof
   :: Setting PowerShell ExecutionPolicy [RemoteSigned] if required
   :: ==========================================================================
   powershell -noprofile -command ^
-    if ((Get-ExecutionPolicy).ToString() -notin @('Unrestricte', 'RemoteSigne', 'ByPass')) { ^
+    if ((Get-ExecutionPolicy).ToString() -notin @('Unrestricted', 'RemoteSigned', 'Bypass')) { ^
       Write-Host "[$(Get-Date -Format 'HH:mm:ss,ff')] Setting PowerShell ExecutionPolicy [RemoteSigned]..."; ^
       Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser ^
     }
