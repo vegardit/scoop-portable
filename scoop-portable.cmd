@@ -402,7 +402,7 @@ goto :eof
     )
 
     call "%SCOOP%\shims\scoop.cmd" %*
-    set rc=%errorlevel%
+    set rc=!errorlevel!
 
     REM /%* makes the first arg (the command) a flag so it is not treated as an app name
     call :get_positional_args apps /%*
@@ -410,9 +410,9 @@ goto :eof
 
     REM save app states of dependencies (if any)
     call :save_active_versions_of_new_apps
-    endlocal
+    endlocal & set "scoop_portable_rc=%rc%"
     call :set_app_env_vars
-    exit /B !rc!
+    exit /B %scoop_portable_rc%
   )
 
   :: ==========================================================================
@@ -431,15 +431,15 @@ goto :eof
   :: ==========================================================================
   if "%scoop_command%" == "reset" (
     call "%SCOOP%\shims\scoop.cmd" %*
-    set rc=%errorlevel%
+    set rc=!errorlevel!
 
     REM /%* makes the first arg (the command) a flag so it is not treated as an app name
     call :get_positional_args apps /%*
     for %%a in (!apps!) do call :save_active_version %%a
 
-    endlocal
+    endlocal & set "scoop_portable_rc=%rc%"
     call :set_app_env_vars
-    exit /B !rc!
+    exit /B %scoop_portable_rc%
   )
 
   :: ==========================================================================
@@ -865,6 +865,10 @@ goto :eof
   REM not using "for %%a in (%*)" which automatically expands wildcard arguments
   :get_nth_positional_arg___CHECK_NEXT_ARG
     set "arg=%~1"
+    if "%arg%" == "" (
+      REM no more arguments - requested positional argument does not exist
+      exit /B 1
+    )
     set first_char=%arg:~0,1%
     if not "%first_char%" == "-" (
       if not "%first_char%" == "/" (
