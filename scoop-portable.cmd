@@ -334,7 +334,7 @@ goto :eof
     } ^
     ^
     Get-ChildItem '%SCOOP%\apps\*\*' -directory -filter current ^| Foreach-Object { fixAppCurrentVersionSymlinks $_ }; ^
-    Get-ChildItem '%SCOOP%\apps\*' -directory ^| Where-Object { -not (Test-Path '$_\current') } ^| Foreach-Object { fixAppCurrentVersionSymlinks ([System.IO.DirectoryInfo](Join-Path $_.FullName 'current')) }; ^
+    Get-ChildItem '%SCOOP%\apps\*' -directory ^| Where-Object { -not (Test-Path (Join-Path $_.FullName 'current')) } ^| Foreach-Object { fixAppCurrentVersionSymlinks ([System.IO.DirectoryInfo](Join-Path $_.FullName 'current')) }; ^
     #
 
   powershell -noprofile -ex unrestricted -command "%fix_paths%" || exit /B 1
