@@ -653,12 +653,12 @@ goto :eof
 :: ############################################################################
 
 :append_PATH <PATH>
-  call :replace_substrings "%PATH%" "%~1;" "" PATH
+  call :replace_substrings PATH "%~1;" ""
   call :ends_with "%PATH%" ";" && set "PATH=%PATH%%~1;" || set "PATH=%PATH%;%~1;"
 goto :eof
 
 :extend_PATH <PATH>
-  call :replace_substrings "%PATH%" "%~1;" "" PATH
+  call :replace_substrings PATH "%~1;" ""
   set "PATH=%~1;%PATH%"
 goto :eof
 
@@ -765,7 +765,8 @@ goto :eof
   setlocal
   set searchIn=%~1
   set searchFor=%~2
-  call :replace_substrings "%searchIn%" "%searchFor%" "" "result"
+  set result=%searchIn%
+  call :replace_substrings result "%searchFor%" ""
   if "%searchIn%" == "%result%" (
     REM substring not found
     exit /B 1
@@ -773,13 +774,15 @@ goto :eof
 goto :eof
 
 
-:replace_substrings <SEARCH_IN> <SEARCH_FOR> <REPLACE_WITH> <RESULT_VAR>
+:replace_substrings <VAR_NAME> <SEARCH_FOR> <REPLACE_WITH> [<RESULT_VAR>]
   setlocal
-  set searchIn=%~1
+  set var_name=%~1
   set searchFor=%~2
   set replaceWith=%~3
   set result_var=%~4
+  if "%result_var%"=="" set result_var=%var_name%
 
+  call set searchIn=%%%var_name%%%
   call set result=%%searchIn:%searchFor%=%replaceWith%%%
   endlocal & set "%result_var%=%result%"
 goto :eof
