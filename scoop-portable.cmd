@@ -207,11 +207,14 @@ goto :eof
   :: 1) replacing '$env:USERPROFILE\.config' is a workaround for https://github.com/ScoopInstaller/Scoop/issues/4498
   ::    to make <USERPROFILE>\.config\scoop\config.json portable
   :: 2) replacing '  Add-ShimsDirToPath' to prevent shim dir being permanently added to %PATH%
+  :: 3) disabling the "exists and is not empty" check for SCOOP_DIR (added by ScoopInstaller/Install@c64d414)
+  ::    because the portable install root always contains at least scoop-portable.cmd itself
   powershell -noprofile -command !scoopProxy! ^
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; ^
     $installer_script = (New-Object System.Net.WebClient).DownloadString('https://get.scoop.sh'); ^
     $installer_script = $installer_script.replace('$env:XDG_CONFIG_HOME', '\"$env:SCOOP\.portable\"'); ^
     $installer_script = $installer_script -replace '\s\s+Add-ShimsDirToPath', ''; ^
+    $installer_script = $installer_script.replace('(Test-Path \"$SCOOP_DIR\*\")', '$false'); ^
     Set-Content -Path "$env:TEMP\scoop_installer.ps1" -Value $installer_script || exit /B 1
   powershell -noprofile -File "%TEMP%\scoop_installer.ps1" || exit /B 1
   del "%TEMP%\scoop_installer.ps1"
