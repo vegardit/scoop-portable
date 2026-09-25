@@ -98,3 +98,19 @@ jobs:
 
     - name: "Test: scoop-portable - scoop update"
       run: my_new_scoop_dir\test-update.cmd
+
+
+    - name: "Test: scoop-portable - failed download aborts installation"
+      # redirects get.scoop.sh to localhost so that downloading the installer fails.
+      # runs last because it changes the hosts file of the runner
+      run: |
+        (echo.& echo 127.0.0.1 get.scoop.sh& echo ::1 get.scoop.sh)>>%SystemRoot%\System32\drivers\etc\hosts
+        ipconfig /flushdns
+        :: fail on setup errors, otherwise calling a missing wrapper would also count as the expected failure
+        mkdir failing_install || exit 1
+        copy scoop-portable.cmd failing_install\ || exit 1
+        call failing_install\scoop-portable.cmd && (
+          echo ERROR: Expected the installation to fail!
+          exit 1
+        )
+        exit 0

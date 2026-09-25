@@ -209,7 +209,9 @@ goto :eof
   :: 2) replacing '  Add-ShimsDirToPath' to prevent shim dir being permanently added to %PATH%
   :: 3) disabling the "exists and is not empty" check for SCOOP_DIR (added by ScoopInstaller/Install@c64d414)
   ::    because the portable install root always contains at least scoop-portable.cmd itself
-  powershell -noprofile -command !scoopProxy! ^
+  :: $ErrorActionPreference='Stop' makes a failed download abort the installation
+  :: instead of writing and running an empty installer script
+  powershell -noprofile -command $ErrorActionPreference = 'Stop'; !scoopProxy! ^
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; ^
     $installer_script = (New-Object System.Net.WebClient).DownloadString('https://get.scoop.sh'); ^
     $installer_script = $installer_script.replace('$env:XDG_CONFIG_HOME', '\"$env:SCOOP\.portable\"'); ^
@@ -219,7 +221,13 @@ goto :eof
   powershell -noprofile -File "%TEMP%\scoop_installer.ps1" || exit /B 1
   del "%TEMP%\scoop_installer.ps1"
 
-  call :patch_scoop
+  :: the installer also exits with 0 without installing anything, e.g. if another scoop is on PATH
+  if not exist "%SCOOP%\shims\scoop.cmd" (
+    call :exit_with_ERROR The scoop installer did not install scoop at [%SCOOP%]
+    exit /B 1
+  )
+
+  call :patch_scoop || exit /B 1
 
   :: installing itself as scoop wrapper
   copy /Y "%~f0" "%SCOOP%\.portable\scoop.cmd" >NUL
