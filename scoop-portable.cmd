@@ -398,13 +398,18 @@ goto :eof
     ) else (
       REM updating apps also updates scoop itself if its last update is older than 3 hours
       call :ensure_scoop_patched
-      if "!app_name!" == "*" (
-        call :save_active_versions
-      ) else (
-        REM /%* makes the first arg (the command) a flag so it is not treated as an app name
-        call :get_positional_args apps /%*
-        for %%a in (!apps!) do call :save_active_version %%a
-      )
+    )
+    REM compare manifests to also cover --all, "*", "scoop update scoop <app>" and new
+    REM dependencies. A changed JDK does not take JAVA_HOME from the selected one there
+    call :save_active_versions_of_changed_apps
+    REM save the named apps last so they win, e.g. "scoop update <jdk>" re-selects that JDK.
+    REM skipped if any argument is "*" (not only the first app, e.g. "scoop update scoop *"),
+    REM because the for loop in get_positional_args would expand it to the file names of the
+    REM current directory. has_arg itself compares without a for loop, so "*" stays literal
+    call :has_arg * %* || (
+      REM /%* makes the first arg (the command) a flag so it is not treated as an app name
+      call :get_positional_args apps /%*
+      for %%a in (!apps!) do call :save_active_version %%a
     )
     call :getx_PATH PATH_AFTER_UPDATE
     if not "!PATH_BEFORE_UPDATE!"=="!PATH_AFTER_UPDATE!" (
@@ -488,10 +493,14 @@ goto :eof
 
 
 
-:save_active_versions
+:save_active_versions_of_changed_apps
+  :: saves the version of each app whose manifest differs from its saved copy or that has none yet.
+  :: fc also fails for apps without a current manifest, which save_active_version then skips.
+  :: keep_selected_jdk: a changed JDK must not take JAVA_HOME from the selected one, because
+  :: the JDK is selected with "scoop reset <jdk>" (or by naming it in "scoop update <jdk>")
   setlocal
   for /F %%f in ('dir /B "%SCOOP%\apps\*" 2^>NUL') do (
-    call :save_active_version %%~f
+    fc /B "%SCOOP%\apps\%%~f\current\manifest.json" "%SCOOP%\.portable\active_versions\%%~f.json" >NUL 2>&1 || call :save_active_version %%~f keep_selected_jdk
   )
 goto :eof
 
@@ -509,14 +518,16 @@ goto :eof
 
 
 :save_active_version
-  :: args: <APP_NAME(@<APP_VERSION>)>
+  :: args: <APP_NAME(@<APP_VERSION>)> [keep_selected_jdk]
   setlocal
   call :mkdirs "%SCOOP%\.portable\active_versions"
 
   set app=%~1
+  set save_mode=%~2
 
-  :: extract appname from app@version
+  :: extract appname from [bucket/]app[@version]
   call :substring_before %app% @ app_name
+  for %%i in ("%app_name:/=\%") do set "app_name=%%~nxi"
 
   if not exist "%SCOOP%\apps\%app_name%\current\manifest.json" exit /B 0
 
@@ -527,9 +538,15 @@ goto :eof
   if %errorlevel% == 1 exit /B 0
 
   :: the "if ($env_key -eq 'JAVA_HOME')" branch is for switching between different java versions to ensure only one is on PATH
+  ::
+  :: with keep_selected_jdk, a JDK that is not the selected one (another app owns the JAVA_HOME file)
+  :: stops after refreshing its saved copy above: selecting it would delete the other JDK's files.
+  :: skipping its env files is safe, they only use $dir, which points to the version-independent
+  :: "current" folder, and they are rebuilt from the saved copy when the JDK gets selected
   set save_env_additions= ^
     Set-StrictMode -version latest; ^
     $app_manifest = (Get-Content -path '%SCOOP%\.portable\active_versions\%app_name%.json' -raw ^| ConvertFrom-Json); ^
+    if ('%save_mode%' -eq 'keep_selected_jdk' -and 'env_set' -in $app_manifest.PSobject.Properties.Name -and 'JAVA_HOME' -in $app_manifest.env_set.PSObject.Properties.Name -and (Get-ChildItem -path '%SCOOP%\.portable\active_versions\*.JAVA_HOME.env_set.cmd' ^| Where-Object { $_.Name -ne '%app_name%.JAVA_HOME.env_set.cmd' })) { exit 0 } ^
     if ('env_set' -in $app_manifest.PSobject.Properties.Name) { ^
       $app_manifest.env_set.PSObject.Properties ^| ForEach-Object { ^
         $env_key = $_.Name; ^
@@ -919,12 +936,14 @@ goto :eof
 goto :eof
 
 
-:get_1st_positional_arg <RESULT_VAR> <ARG,...>
+:get_1st_positional_arg
+  :: args: <RESULT_VAR> <ARG,...>
   call :get_nth_positional_arg 1 %*
 goto :eof
 
 
-:get_2nd_positional_arg <RESULT_VAR> <ARG,...>
+:get_2nd_positional_arg
+  :: args: <RESULT_VAR> <ARG,...>
   call :get_nth_positional_arg 2 %*
 goto :eof
 

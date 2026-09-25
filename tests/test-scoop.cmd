@@ -75,6 +75,10 @@ pushd %TEMP%
 
   :: assert installing another scoop-portable is rejected while scoop is on PATH
   call :assert_install_rejected_when_scoop_on_path
+
+  :: assert "scoop update" refreshes the saved versions of updated apps and new dependencies,
+  :: and does not switch JAVA_HOME to a JDK that was not updated
+  call :assert_update_refreshes_active_versions
 popd
 
 goto :EOF
@@ -130,6 +134,90 @@ goto :EOF
   rd /S /Q "%other_root%"
   endlocal
   echo ::endgroup::
+goto :EOF
+
+
+:assert_update_refreshes_active_versions
+  echo ::group::saved app versions after scoop update (stub scoop)
+  setlocal
+  set "stub_root=%TEMP%\scoop-portable-update-test"
+  set "versions=%stub_root%\.portable\active_versions"
+  if exist "%stub_root%" rd /S /Q "%stub_root%"
+  REM fail on setup errors, otherwise a broken fixture could satisfy some assertions
+  md "%stub_root%\shims" "%stub_root%\.portable" || exit 1
+  for %%a in (foo bar jdk8 jdk11) do md "%stub_root%\apps\%%a\current" || exit 1
+  copy /Y "%SCOOP%\.portable\scoop.cmd" "%stub_root%\.portable\scoop.cmd" >NUL || exit 1
+  REM the stub scoop does nothing; the test changes the manifests itself like an update would
+  >"%stub_root%\shims\scoop.cmd" echo @exit /B 0
+  >"%stub_root%\apps\foo\current\manifest.json" echo {"version": "1"}
+  >"%stub_root%\apps\jdk8\current\manifest.json" echo {"version": "8", "env_set": {"JAVA_HOME": "$dir"}}
+  >"%stub_root%\apps\jdk11\current\manifest.json" echo {"version": "11", "env_set": {"JAVA_HOME": "$dir"}}
+  set "SCOOP=%stub_root%"
+
+  REM make jdk11 the active JDK
+  call "%SCOOP%\.portable\scoop.cmd" reset foo jdk8 jdk11 >NUL 2>&1
+  call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+
+  REM bar simulates a new dependency installed by the update
+  >"%stub_root%\apps\bar\current\manifest.json" echo {"version": "1"}
+  for %%u in ("main/foo" "--all" "scoop foo") do (
+    >"%stub_root%\apps\foo\current\manifest.json" echo {"version": "%%~u"}
+    call "%SCOOP%\.portable\scoop.cmd" update %%~u >NUL 2>&1
+    call :assert_same_file "%stub_root%\apps\foo\current\manifest.json" "%versions%\foo.json" "scoop update %%~u"
+  )
+  call :assert_file_exists "%versions%\bar.json"
+
+  REM an update of the not selected jdk8 must refresh its saved copy but keep jdk11 selected.
+  REM called via a subroutine because a for loop would expand "*" even inside quotes
+  call :assert_update_keeps_selected_jdk *
+  call :assert_update_keeps_selected_jdk --all
+
+  REM a bucket prefix must not prevent switching the JDK
+  call "%SCOOP%\.portable\scoop.cmd" reset java/jdk8 >NUL 2>&1
+  call :assert_file_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+
+  REM naming a JDK in "scoop update" still selects it, even if it was already up to date
+  call "%SCOOP%\.portable\scoop.cmd" update jdk11 >NUL 2>&1
+  call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+
+  REM "*" must not be expanded to file names: run from a folder containing a file named
+  REM like the not selected jdk8, which must then not be saved as a named app
+  md "%stub_root%\cwd" || exit 1
+  >"%stub_root%\cwd\jdk8" type NUL
+  pushd "%stub_root%\cwd"
+  call "%SCOOP%\.portable\scoop.cmd" update scoop * >NUL 2>&1
+  popd
+  call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+
+  rd /S /Q "%stub_root%"
+  endlocal
+  echo ::endgroup::
+goto :EOF
+
+
+:assert_update_keeps_selected_jdk
+  :: args: <UPDATE_ARG>
+  :: expects the fixture of assert_update_refreshes_active_versions with jdk11 selected
+  >"%stub_root%\apps\foo\current\manifest.json" echo {"version": "updated by %~1"}
+  >"%stub_root%\apps\jdk8\current\manifest.json" echo {"version": "8 updated by %~1", "env_set": {"JAVA_HOME": "$dir"}}
+  call "%SCOOP%\.portable\scoop.cmd" update %~1 >NUL 2>&1
+  REM foo shows that the update was processed at all, so the JDK checks cannot pass by accident
+  call :assert_same_file "%stub_root%\apps\foo\current\manifest.json" "%versions%\foo.json" "scoop update %~1"
+  call :assert_same_file "%stub_root%\apps\jdk8\current\manifest.json" "%versions%\jdk8.json" "scoop update %~1"
+  call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+goto :EOF
+
+
+:assert_same_file
+  :: args: <EXPECTED_FILE> <ACTUAL_FILE> <COMMAND>
+  fc /B "%~1" "%~2" >NUL 2>&1 || (
+    echo "ERROR: [%~2] does not match [%~1] after [%~3]!"
+    exit 1
+  )
 goto :EOF
 
 
