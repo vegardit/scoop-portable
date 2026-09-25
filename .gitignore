@@ -1,8 +1,11 @@
-# Local work folder that is not checked in
-_LOCAL/
+# Local work folders that is not checked in
+/_*/
+
+.*
+!.editorconfig
+!.git*
 
 #scoop
-.portable
 apps
 buckets
 cache
@@ -13,32 +16,11 @@ workspace
 scoop-portable-config.cmd
 tests/scoop-portable.cmd
 
-# Eclipse
-.settings/
-.project
-**/.*.md.html
-
-# IntelliJ
-.idea
-*.iml
-*.ipr
-*.iws
-
-# Eclipse Theia
-.theia
-
-# Visual Studio Code
-.vscode
-
-# OSX
-.DS_Store
-
 # Vim
 *.swo
 *.swp
 
 # Temp files
-.history
 *.tmp
 *.bak
 /dump
