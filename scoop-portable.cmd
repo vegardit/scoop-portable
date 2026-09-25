@@ -379,12 +379,16 @@ goto :eof
     set rc=!errorlevel!
     if !app_name! == scoop (
       call :patch_scoop
-    ) else if "!app_name!" == "*" (
-      call :save_active_versions
     ) else (
-      REM /%* makes the first arg (the command) a flag so it is not treated as an app name
-      call :get_positional_args apps /%*
-      for %%a in (!apps!) do call :save_active_version %%a
+      REM updating apps also updates scoop itself if its last update is older than 3 hours
+      call :ensure_scoop_patched
+      if "!app_name!" == "*" (
+        call :save_active_versions
+      ) else (
+        REM /%* makes the first arg (the command) a flag so it is not treated as an app name
+        call :get_positional_args apps /%*
+        for %%a in (!apps!) do call :save_active_version %%a
+      )
     )
     call :getx_PATH PATH_AFTER_UPDATE
     if not "!PATH_BEFORE_UPDATE!"=="!PATH_AFTER_UPDATE!" (
@@ -406,6 +410,7 @@ goto :eof
 
     call "%SCOOP%\shims\scoop.cmd" %*
     set rc=!errorlevel!
+    call :ensure_scoop_patched
 
     REM /%* makes the first arg (the command) a flag so it is not treated as an app name
     call :get_positional_args apps /%*
@@ -449,7 +454,10 @@ goto :eof
   :: EXECUTE other scoop command
   :: ==========================================================================
   call "%SCOOP%\shims\scoop.cmd" %*
-  exit /B %errorlevel%
+  set rc=!errorlevel!
+  :: e.g. "scoop download" and "scoop virustotal" also update scoop if it is outdated
+  call :ensure_scoop_patched
+  exit /B !rc!
 goto :eof
 
 
@@ -589,6 +597,19 @@ goto :eof
     #
 
   powershell -noprofile -ex unrestricted -command "%patch_scoop%" || exit /B 1
+goto :eof
+
+
+
+:ensure_scoop_patched
+  :: ##########################################################################
+  :: re-apply the patches if scoop replaced or reset its lib files, e.g. when it
+  :: updated itself implicitly (install/update/download/virustotal do this when
+  :: its last update is older than 3 hours).
+  :: The shortcuts patch only appends lines and does not depend on upstream code,
+  :: so it serves as the marker for all patches.
+  :: ##########################################################################
+  findstr /L /C:"function create_startmenu_shortcuts($manifest, $dir, $global, $arch) { }" "%SCOOP%\apps\scoop\current\lib\shortcuts.ps1" >NUL 2>NUL || call :patch_scoop
 goto :eof
 
 
