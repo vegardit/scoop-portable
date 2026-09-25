@@ -1,4 +1,6 @@
 @echo off
+:: CI test: loads scoop-portable and checks the behavior of its scoop wrapper
+:: (app installs, active version tracking, java switching, exit codes)
 setlocal
 
 :: https://superuser.com/questions/80485/exit-batch-file-from-subroutine
@@ -7,7 +9,9 @@ if not "%selfWrapped%"=="%~0" (
   REM and all subroutines, but not the original cmd.exe
   set "selfWrapped=%~0"
   %ComSpec% /S /C ""%~0" %*"
-  goto :EOF
+  REM "cmd /c test-scoop.cmd" (as used by CI via sudo) exits with 0 if this script
+  REM ends with "goto :EOF", so pass the exit code of the wrapped run on explicitly
+  call exit /B %%errorlevel%%
 )
 
 :: add commands eval.cmd to PATH
@@ -54,6 +58,10 @@ pushd %TEMP%
   call eval java -version
   call eval call scoop reset temurin11-jdk
   call eval java -version
+
+  :: assert the wrapper returns the exit code of install/reset/uninstall.
+  :: uses a stub scoop because scoop itself exits with 0 when a subcommand fails
+  call :assert_wrapper_exit_codes
 popd
 
 goto :EOF
@@ -70,6 +78,33 @@ goto :EOF
 :assert_file_not_exists
   if exist "%~1" (
     echo "ERROR: Unexpected file [%~1] exists!"
+    exit 1
+  )
+goto :EOF
+
+
+:assert_wrapper_exit_codes
+  echo ::group::wrapper exit codes (stub scoop exiting with 7)
+  setlocal
+  set "stub_root=%TEMP%\scoop-portable-exit-code-test"
+  if exist "%stub_root%" rd /S /Q "%stub_root%"
+  md "%stub_root%\shims" "%stub_root%\apps" "%stub_root%\.portable"
+  copy /Y "%SCOOP%\.portable\scoop.cmd" "%stub_root%\.portable\scoop.cmd" >NUL
+  >"%stub_root%\shims\scoop.cmd" echo @exit /B 7
+  set "SCOOP=%stub_root%"
+  for %%c in (install reset uninstall) do (
+    call "%SCOOP%\.portable\scoop.cmd" %%c some-app >NUL 2>&1
+    call :assert_exit_code 7 "scoop %%c"
+  )
+  rd /S /Q "%stub_root%"
+  endlocal
+  echo ::endgroup::
+goto :EOF
+
+
+:assert_exit_code <EXPECTED> <COMMAND>
+  if not "%errorlevel%" == "%~1" (
+    echo "ERROR: Expected exit code %~1 from [%~2] but got %errorlevel%!"
     exit 1
   )
 goto :EOF

@@ -418,9 +418,15 @@ goto :eof
 
     REM save app states of dependencies (if any)
     call :save_active_versions_of_new_apps
-    endlocal & set "scoop_portable_rc=%rc%"
-    call :set_app_env_vars
-    exit /B %scoop_portable_rc%
+
+    REM %rc% would be expanded when this block is parsed, i.e. before rc is set.
+    REM The FOR variable carries the exit code across endlocal, which must run
+    REM before set_app_env_vars so the env changes reach the caller.
+    for %%r in (!rc!) do (
+      endlocal
+      call :set_app_env_vars
+      exit /B %%r
+    )
   )
 
   :: ==========================================================================
@@ -429,7 +435,7 @@ goto :eof
   if "%scoop_command%" == "uninstall" (
     call :get_2nd_positional_arg app_name %*
     call "%SCOOP%\shims\scoop.cmd" %*
-    set rc=%errorlevel%
+    set rc=!errorlevel!
     call :cleanup_active_versions
     exit /B !rc!
   )
@@ -445,9 +451,12 @@ goto :eof
     call :get_positional_args apps /%*
     for %%a in (!apps!) do call :save_active_version %%a
 
-    endlocal & set "scoop_portable_rc=%rc%"
-    call :set_app_env_vars
-    exit /B %scoop_portable_rc%
+    REM see the install block for why the exit code is passed via a FOR variable
+    for %%r in (!rc!) do (
+      endlocal
+      call :set_app_env_vars
+      exit /B %%r
+    )
   )
 
   :: ==========================================================================
