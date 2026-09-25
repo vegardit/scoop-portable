@@ -62,6 +62,19 @@ pushd %TEMP%
   :: assert the wrapper returns the exit code of install/reset/uninstall.
   :: uses a stub scoop because scoop itself exits with 0 when a subcommand fails
   call :assert_wrapper_exit_codes
+
+  :: assert global installs are rejected without installing anything.
+  :: <NUL makes the error pause of exit_with_ERROR return immediately
+  for %%f in (-g --global) do (
+    echo ::group::call scoop install %%f jq - expected to be rejected
+    call scoop install %%f jq <NUL
+    call :assert_exit_code 1 "scoop install %%f jq"
+    call :assert_file_not_exists "%SCOOP%\globalApps\apps\jq"
+    echo ::endgroup::
+  )
+
+  :: assert installing another scoop-portable is rejected while scoop is on PATH
+  call :assert_install_rejected_when_scoop_on_path
 popd
 
 goto :EOF
@@ -102,7 +115,26 @@ goto :EOF
 goto :EOF
 
 
-:assert_exit_code <EXPECTED> <COMMAND>
+:assert_install_rejected_when_scoop_on_path
+  echo ::group::install a second scoop-portable while scoop is on PATH - expected to be rejected
+  setlocal
+  set "other_root=%TEMP%\scoop-portable-guard-test"
+  if exist "%other_root%" rd /S /Q "%other_root%"
+  REM fail on setup errors, otherwise calling a missing wrapper would also count as the expected rejection
+  md "%other_root%" || exit 1
+  copy /Y "%SCOOP%\.portable\scoop.cmd" "%other_root%\scoop-portable.cmd" >NUL || exit 1
+  call "%other_root%\scoop-portable.cmd" <NUL
+  call :assert_exit_code 1 "scoop-portable.cmd in [%other_root%]"
+  REM .portable is created after the check, right before the installer is downloaded
+  call :assert_file_not_exists "%other_root%\.portable"
+  rd /S /Q "%other_root%"
+  endlocal
+  echo ::endgroup::
+goto :EOF
+
+
+:assert_exit_code
+  :: args: <EXPECTED> <COMMAND>
   if not "%errorlevel%" == "%~1" (
     echo "ERROR: Expected exit code %~1 from [%~2] but got %errorlevel%!"
     exit 1

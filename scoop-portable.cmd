@@ -137,8 +137,16 @@ goto :eof
   :: ##########################################################################
 
   call :log_HEADER Installing [scoop] at [%SCOOP%]...
-  where /Q scoop && (
+  setlocal
+  :: ignore the wrapper and shims of this installation, e.g. on PATH from an earlier load in the same
+  :: session; otherwise also the upstream installer would find them and silently skip the installation.
+  :: :extend_PATH adds both entries in exactly this form
+  call :replace_substrings PATH "%SCOOP%\.portable;" ""
+  call :replace_substrings PATH "%SCOOP%\shims;" ""
+  :: $PATH: excludes the current directory, e.g. when started from within %SCOOP%\shims
+  where /Q $PATH:scoop && (
     call :exit_with_ERROR Cannot install scoop, 'scoop' command already on PATH
+    exit /B 1
   )
 
   :: https://github.com/ScoopInstaller/Scoop/wiki/Quick-Start#installing-scoop
@@ -414,6 +422,7 @@ goto :eof
     call :has_arg -g %* && set global_install=true
     if "!global_install!" == "true" (
       call :exit_with_ERROR Installing applications globally is not supported by scoop-portable.
+      exit /B 1
     )
 
     call "%SCOOP%\shims\scoop.cmd" %*
@@ -499,7 +508,8 @@ goto :eof
 
 
 
-:save_active_version <APP_NAME(@<APP_VERSION>)>
+:save_active_version
+  :: args: <APP_NAME(@<APP_VERSION>)>
   setlocal
   call :mkdirs "%SCOOP%\.portable\active_versions"
 
@@ -691,20 +701,29 @@ goto :eof
 
 :: ############################################################################
 :: utility methods
+::
+:: NOTE: keep label lines free of any text after the label name and document
+:: arguments on the next line. In some file layouts cmd executed the rest of a
+:: label line as a command when the label was called, e.g. "[<RESULT_VAR>]"
+:: created a file named "]".
 :: ############################################################################
 
-:append_PATH <PATH>
+:append_PATH
+  :: args: <PATH>
   call :replace_substrings PATH "%~1;" ""
   call :ends_with "%PATH%" ";" && set "PATH=%PATH%%~1;" || set "PATH=%PATH%;%~1;"
 goto :eof
 
-:extend_PATH <PATH>
+:extend_PATH
+  :: args: <PATH>
   call :replace_substrings PATH "%~1;" ""
   set "PATH=%~1;%PATH%"
 goto :eof
 
 
 :exit_with_ERROR
+  :: prints the error, waits so it can be read, and returns 1. It does NOT stop the
+  :: caller: follow the call with "exit /B 1" where execution must not continue.
   :: only Windows 10+ supports ANSI
   if "%ANSICON%" == "1" (
     echo [91m[%time%] ERROR: %*[0m
@@ -715,7 +734,8 @@ goto :eof
 exit /B 1
 
 
-:getx_PATH <RESULT_VAR>
+:getx_PATH
+  :: args: <RESULT_VAR>
   :: counterpart to "setx PATH" command
   setlocal
   set result_var=%~1
@@ -730,7 +750,8 @@ goto :eof
 :: logging
 :: ============================================================================
 
-:log_HEADER <MSG,...>
+:log_HEADER
+  :: args: <MSG,...>
   if "%ANSICON%" == "1" (
     echo [1m===========================================================[0m
     echo [%time%] [1m%*[0m
@@ -744,7 +765,8 @@ goto :eof
 goto :eof
 
 
-:log_TASK <MSG,...>
+:log_TASK
+  :: args: <MSG,...>
   :: only Windows 10+ supports ANSI
   if "%ANSICON%" == "1" (
     echo [%time%] [1m%*...[0m
@@ -754,7 +776,8 @@ goto :eof
 goto :eof
 
 
-:log_WARN <MSG,...>
+:log_WARN
+  :: args: <MSG,...>
   :: only Windows 10+ supports ANSI
   if "%ANSICON%" == "1" (
     echo [%time%] [93mWARNING: %*[0m
@@ -764,7 +787,8 @@ goto :eof
 goto :eof
 
 
-:log_SUCCESS <MSG,...>
+:log_SUCCESS
+  :: args: <MSG,...>
   :: only Windows 10+ supports ANSI
   if "%ANSICON%" == "1" (
     echo [%time%] [92mSUCCESS: %*[0m
@@ -778,7 +802,8 @@ goto :eof
 :: file system operations
 :: ============================================================================
 
-:read_first_line_of_file <FILE_PATH> <RESULT_VAR>
+:read_first_line_of_file
+  :: args: <FILE_PATH> <RESULT_VAR>
   setlocal
   set filePath=%~1
   set result_var=%~2
@@ -787,7 +812,8 @@ goto :eof
 goto :eof
 
 
-:mkdirs <PATH>
+:mkdirs
+  :: args: <PATH>
   :: like "mkdir -p" on Linux
   setlocal enableextensions
   if not exist %1 md %1
@@ -797,12 +823,14 @@ goto :eof
 :: ============================================================================
 :: string operations
 :: ============================================================================
-:ends_with <SEARCH_IN> <SEARCH_FOR>
+:ends_with
+  :: args: <SEARCH_IN> <SEARCH_FOR>
   echo %~1|findstr /E /L %2 >NUL
 goto :eof
 
 
-:has_substring <SEARCH_IN> <SEARCH_FOR>
+:has_substring
+  :: args: <SEARCH_IN> <SEARCH_FOR>
   setlocal
   set searchIn=%~1
   set searchFor=%~2
@@ -815,7 +843,8 @@ goto :eof
 goto :eof
 
 
-:replace_substrings <VAR_NAME> <SEARCH_FOR> <REPLACE_WITH> [<RESULT_VAR>]
+:replace_substrings
+  :: args: <VAR_NAME> <SEARCH_FOR> <REPLACE_WITH> [<RESULT_VAR>]
   setlocal
   set var_name=%~1
   set searchFor=%~2
@@ -829,7 +858,8 @@ goto :eof
 goto :eof
 
 
-:substring_before <SEARCH_IN> <SEARCH_FOR> <RESULT_VAR>
+:substring_before
+  :: args: <SEARCH_IN> <SEARCH_FOR> <RESULT_VAR>
   setlocal
   set searchIn=%~1
   set separator=%~2
@@ -845,7 +875,8 @@ goto :eof
 :: arg parsing
 :: ============================================================================
 
-:has_arg <SEARCH_FOR> <ARG,...>
+:has_arg
+  :: args: <SEARCH_FOR> <ARG,...>
   setlocal
   set "search_for=%~1" & shift /1
   set empty_args=0
@@ -869,7 +900,8 @@ goto :eof
     goto :has_arg___CHECK_NEXT_ARG
 
 
-:get_positional_args <RESULT_VAR>
+:get_positional_args
+  :: args: <RESULT_VAR>
   setlocal EnableDelayedExpansion
   set result_var=%~1
   set args=
@@ -897,7 +929,8 @@ goto :eof
 goto :eof
 
 
-:get_nth_positional_arg <ARG_INDEX> <RESULT_VAR> <ARG,...>
+:get_nth_positional_arg
+  :: args: <ARG_INDEX> <RESULT_VAR> <ARG,...>
   setlocal EnableDelayedExpansion
   set "wanted_pos_arg_index=%~1" & shift /1
   set "result_var=%~1" & shift /1
