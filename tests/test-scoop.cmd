@@ -103,8 +103,9 @@ goto :EOF
 :assert_wrapper_exit_codes
   echo ::group::wrapper exit codes (stub scoop exiting with 7)
   setlocal
-  set "stub_root=%TEMP%\scoop-portable-exit-code-test"
-  if exist "%stub_root%" rd /S /Q "%stub_root%"
+  REM a new folder per run that is left behind: no recursive delete based on a variable,
+  REM which could remove the wrong folder if the variable were wrong or empty
+  set "stub_root=%TEMP%\scoop-portable-exit-code-test-%RANDOM%%RANDOM%"
   md "%stub_root%\shims" "%stub_root%\apps" "%stub_root%\.portable"
   copy /Y "%SCOOP%\.portable\scoop.cmd" "%stub_root%\.portable\scoop.cmd" >NUL
   >"%stub_root%\shims\scoop.cmd" echo @exit /B 7
@@ -113,7 +114,6 @@ goto :EOF
     call "%SCOOP%\.portable\scoop.cmd" %%c some-app >NUL 2>&1
     call :assert_exit_code 7 "scoop %%c"
   )
-  rd /S /Q "%stub_root%"
   endlocal
   echo ::endgroup::
 goto :EOF
@@ -122,8 +122,8 @@ goto :EOF
 :assert_install_rejected_when_scoop_on_path
   echo ::group::install a second scoop-portable while scoop is on PATH - expected to be rejected
   setlocal
-  set "other_root=%TEMP%\scoop-portable-guard-test"
-  if exist "%other_root%" rd /S /Q "%other_root%"
+  REM a new folder per run that is left behind, see assert_wrapper_exit_codes
+  set "other_root=%TEMP%\scoop-portable-guard-test-%RANDOM%%RANDOM%"
   REM fail on setup errors, otherwise calling a missing wrapper would also count as the expected rejection
   md "%other_root%" || exit 1
   copy /Y "%SCOOP%\.portable\scoop.cmd" "%other_root%\scoop-portable.cmd" >NUL || exit 1
@@ -131,7 +131,6 @@ goto :EOF
   call :assert_exit_code 1 "scoop-portable.cmd in [%other_root%]"
   REM .portable is created after the check, right before the installer is downloaded
   call :assert_file_not_exists "%other_root%\.portable"
-  rd /S /Q "%other_root%"
   endlocal
   echo ::endgroup::
 goto :EOF
@@ -140,9 +139,9 @@ goto :EOF
 :assert_update_refreshes_active_versions
   echo ::group::saved app versions after scoop update (stub scoop)
   setlocal
-  set "stub_root=%TEMP%\scoop-portable-update-test"
+  REM a new folder per run that is left behind, see assert_wrapper_exit_codes
+  set "stub_root=%TEMP%\scoop-portable-update-test-%RANDOM%%RANDOM%"
   set "versions=%stub_root%\.portable\active_versions"
-  if exist "%stub_root%" rd /S /Q "%stub_root%"
   REM fail on setup errors, otherwise a broken fixture could satisfy some assertions
   md "%stub_root%\shims" "%stub_root%\.portable" || exit 1
   for %%a in (foo bar jdk8 jdk11) do md "%stub_root%\apps\%%a\current" || exit 1
@@ -192,7 +191,6 @@ goto :EOF
   call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
   call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
 
-  rd /S /Q "%stub_root%"
   endlocal
   echo ::endgroup::
 goto :EOF
