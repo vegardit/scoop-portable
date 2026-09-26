@@ -375,12 +375,14 @@ goto :eof
   )
 
   setlocal EnableDelayedExpansion
+  :: scoop accepts its commands in any case, e.g. "scoop INSTALL", so all comparisons of
+  :: scoop_command below ignore case (if /I), otherwise such a command would bypass its block
   set scoop_command=%1
 
   :: ==========================================================================
   :: INTERCEPT scoop update
   :: ==========================================================================
-  if "%scoop_command%" == "update" (
+  if /I "%scoop_command%" == "update" (
     call :get_2nd_positional_arg app_name %*
     if "!app_name!" == "" (
       set app_name=scoop
@@ -422,9 +424,10 @@ goto :eof
   :: ==========================================================================
   :: INTERCEPT scoop install
   :: ==========================================================================
-  if "%scoop_command%" == "install" (
+  if /I "%scoop_command%" == "install" (
     call :has_arg --global %* && set global_install=true
-    call :has_arg -g %* && set global_install=true
+    REM has_short_option also finds -g in combined short options like -kg, and -G
+    call :has_short_option g %* && set global_install=true
     if "!global_install!" == "true" (
       call :exit_with_ERROR Installing applications globally is not supported by scoop-portable.
       exit /B 1
@@ -454,7 +457,7 @@ goto :eof
   :: ==========================================================================
   :: INTERCEPT scoop uninstall
   :: ==========================================================================
-  if "%scoop_command%" == "uninstall" (
+  if /I "%scoop_command%" == "uninstall" (
     call :get_2nd_positional_arg app_name %*
     call "%SCOOP%\shims\scoop.cmd" %*
     set rc=!errorlevel!
@@ -465,7 +468,7 @@ goto :eof
   :: ==========================================================================
   :: INTERCEPT scoop reset
   :: ==========================================================================
-  if "%scoop_command%" == "reset" (
+  if /I "%scoop_command%" == "reset" (
     call "%SCOOP%\shims\scoop.cmd" %*
     set rc=!errorlevel!
 
@@ -901,7 +904,8 @@ goto :eof
   REM not using "for %%a in (%*)" which automatically expands wildcard arguments
   :has_arg___CHECK_NEXT_ARG
     set "arg=%~1"
-    if "%arg%" == "%search_for%" exit /B 0
+    REM ignores case like scoop's getopt, which takes e.g. -A for -a and --GLOBAL for --global
+    if /I "%arg%" == "%search_for%" exit /B 0
     if "%arg%" == "" (
       REM stop looping if more than 6 empty args in a row were found. this is a workaround for the fact that one cannot
       REM distinguish between an empty "" argument and the end of the argument list
@@ -915,6 +919,33 @@ goto :eof
     )
     shift /1
     goto :has_arg___CHECK_NEXT_ARG
+
+
+:has_short_option
+  :: args: <LETTER> <ARG,...>
+  :: succeeds if an argument with a single leading "-" contains the letter, in any case. scoop's
+  :: getopt also accepts combined short options like -qa for -q -a, which has_arg cannot find.
+  :: Option values and app names do not start with "-" (e.g. "-a 64bit" of scoop install), so
+  :: they are not mistaken for options
+  setlocal EnableDelayedExpansion
+  set "letter=%~1" & shift /1
+  set empty_args=0
+
+  REM not using "for %%a in (%*)" which automatically expands wildcard arguments
+  :has_short_option___CHECK_NEXT_ARG
+    set "arg=%~1"
+    if "!arg!" == "" (
+      REM see has_arg for why the loop ends after 6 empty args in a row
+      if !empty_args! == 6 exit /B 1
+      set /a empty_args+=1
+    ) else (
+      set empty_args=0
+      REM "--" starts a long option instead. Removing the letter (which ignores case) changes
+      REM the argument only if it contains the letter
+      if "!arg:~0,1!" == "-" if not "!arg:~1,1!" == "-" if not "!arg:%letter%=!" == "!arg!" exit /B 0
+    )
+    shift /1
+    goto :has_short_option___CHECK_NEXT_ARG
 
 
 :get_positional_args

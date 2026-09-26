@@ -63,12 +63,13 @@ pushd %TEMP%
   :: uses a stub scoop because scoop itself exits with 0 when a subcommand fails
   call :assert_wrapper_exit_codes
 
-  :: assert global installs are rejected without installing anything.
+  :: assert global installs are rejected without installing anything, also for upper case commands
+  :: and options, and combined short options (-kg is -k -g), which scoop accepts, too.
   :: <NUL makes the error pause of exit_with_ERROR return immediately
-  for %%f in (-g --global) do (
-    echo ::group::call scoop install %%f jq - expected to be rejected
-    call scoop install %%f jq <NUL
-    call :assert_exit_code 1 "scoop install %%f jq"
+  for %%a in ("install -g" "install --global" "install -G" "install --GLOBAL" "install -kg" "INSTALL -g") do (
+    echo ::group::call scoop %%~a jq - expected to be rejected
+    call scoop %%~a jq <NUL
+    call :assert_exit_code 1 "scoop %%~a jq"
     call :assert_file_not_exists "%SCOOP%\globalApps\apps\jq"
     echo ::endgroup::
   )
@@ -77,7 +78,8 @@ pushd %TEMP%
   call :assert_install_rejected_when_scoop_on_path
 
   :: assert "scoop update" refreshes the saved versions of updated apps and new dependencies,
-  :: and does not switch JAVA_HOME to a JDK that was not updated
+  :: and does not switch JAVA_HOME to a JDK that was not updated. Also asserts that reset,
+  :: update and uninstall are handled in any case
   call :assert_update_refreshes_active_versions
 popd
 
@@ -190,6 +192,19 @@ goto :EOF
   popd
   call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
   call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+
+  REM scoop accepts its commands in any case, so these must be handled like the lower case ones.
+  REM Otherwise they would run as other commands, which save no versions: the JDK would not switch
+  call "%SCOOP%\.portable\scoop.cmd" RESET jdk8 >NUL 2>&1
+  call :assert_file_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+  call "%SCOOP%\.portable\scoop.cmd" UPDATE jdk11 >NUL 2>&1
+  call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+  REM uninstall removes the saved versions of apps that are no longer installed, like gone
+  >"%versions%\gone.json" echo {"version": "1"}
+  call "%SCOOP%\.portable\scoop.cmd" UNINSTALL gone >NUL 2>&1
+  call :assert_file_not_exists "%versions%\gone.json"
 
   endlocal
   echo ::endgroup::
