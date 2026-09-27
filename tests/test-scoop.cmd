@@ -1058,7 +1058,7 @@ goto :EOF
   >"%lib%\system.ps1" echo function Set-EnvVar {
   >>"%lib%\system.ps1" echo }
   >>"%lib%\system.ps1" echo function Set-EnvVar { param([string]$Name, [string]$Value, [switch]$Global) }
-  >>"%lib%\system.ps1" echo # scoop-portable-patches: 4
+  >>"%lib%\system.ps1" echo # scoop-portable-patches: 5
   >"%lib%\install.ps1" echo function Invoke-HookScript {
   >>"%lib%\install.ps1" echo }
   >>"%lib%\install.ps1" echo . "$env:SCOOP\.portable\environment.ps1"

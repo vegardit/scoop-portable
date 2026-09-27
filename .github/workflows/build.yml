@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-ArtifactOfProjectHomePage: https://github.com/vegardit/scoop-portable
 #
+# Validates the portable wrapper on Windows, including recovery of a disposable user's PATH.
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 name: Build
 
@@ -67,6 +68,10 @@ jobs:
         if ($hits) { exit 1 }
 
 
+    - name: "Test: user PATH snapshot helpers"
+      run: powershell -noprofile -ex unrestricted -file tests\test-user-path.ps1
+
+
     - name: Create Windows user 'noadmin'
       run: |
         net user noadmin p@ssw0rd /add
@@ -97,6 +102,12 @@ jobs:
 
     - name: "Test: scoop-portable"
       run: echo p@ssw0rd| sudo -u noadmin --stdin cmd /c "%CD%\tests\test-scoop.cmd"
+
+
+    - name: "Test: user PATH recovery after update"
+      # This fixture changes HKCU\Environment\Path, so keep it outside the general
+      # suite that also runs as the runner account or in a developer's profile.
+      run: echo p@ssw0rd| sudo -u noadmin --stdin powershell -noprofile -ex unrestricted -file "%CD%\tests\test-user-path-update.ps1"
 
 
     - name: "Test: scoop-portable - different user and path"

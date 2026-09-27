@@ -99,6 +99,37 @@ in a Command Prompt where you have loaded `scoop-portable.cmd`.
 This rebuilds the settings from the information already saved for that app.
 For a JDK, the reset also switches the active Java version to that JDK.
 
+#### Errors while restoring the user PATH
+
+During `scoop update`, an app's installer can change the Windows user PATH directly.
+scoop-portable saves the original value before updating and restores it afterwards.
+If saving fails, the update does not start.
+Resolve the reported problem, such as an inaccessible temporary directory, before retrying.
+
+If restoration fails, the error message names a retained snapshot file.
+Keep that file and resolve the reported problem before restoring it.
+Starting another update will not recover the original PATH, because it would save the already changed value.
+
+To recover, run `powershell -NoProfile` from a Command Prompt where scoop-portable is loaded.
+Then run the following commands and enter the snapshot's full path when prompted:
+
+```powershell
+. "$env:SCOOP\.portable\environment.ps1"
+Restore-ScoopPortableUserPath (Read-Host 'Snapshot file')
+```
+
+`True` means the saved value was restored; `False` means it already matched.
+If the command reports an error, resolve it before continuing.
+After successful restoration, notify Windows of the change:
+
+```powershell
+. "$env:SCOOP\apps\scoop\current\lib\system.ps1"
+Publish-EnvVar
+```
+
+You can then delete the snapshot file and run `exit` to leave PowerShell.
+Existing command windows can still hold old values, as described below.
+
 #### Stale values in an existing Command Prompt
 
 An open Command Prompt can retain old environment values after an app's settings change or the app is removed.

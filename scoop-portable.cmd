@@ -420,7 +420,9 @@ goto :eof
     REM so scoop stashes the patched lib files before pulling, while its running process keeps
     REM the patched functions it loaded at start. Reverting the patches before the update would
     REM let this whole run write persistent environment variables
-    call :getx_PATH PATH_BEFORE_UPDATE
+    REM App installers can still write PATH directly. Keep its raw value out of CMD,
+    REM and do not start an update unless a complete recovery snapshot was saved.
+    call :save_user_PATH || exit /B 1
     REM before updating apps, scoop updates itself if "scoop" is one of the apps or its last
     REM update is 3 hours or more ago. That update runs on its own instead (see
     REM update_scoop_if_outdated), so every "scoop" target is removed from the app invocation.
@@ -474,11 +476,8 @@ goto :eof
         call :save_active_version %%a || if !rc! == 0 set rc=1
       )
     )
-    call :getx_PATH PATH_AFTER_UPDATE
-    if not "!PATH_BEFORE_UPDATE!"=="!PATH_AFTER_UPDATE!" (
-      call :log_TASK Restoring PATH variable
-      setx PATH  "!PATH_BEFORE_UPDATE!"
-    )
+    REM Restore even after an update or settings-save failure, without hiding that error.
+    call :restore_user_PATH || if !rc! == 0 set rc=1
     exit /B !rc!
   )
 
@@ -737,7 +736,7 @@ goto :eof
     $shortcutFunctions = 'function create_startmenu_shortcuts($manifest, $dir, $global, $arch) {', 'function startmenu_shortcut([System.IO.FileInfo] $target, $shortcutName, $arguments, [System.IO.FileInfo]$icon, $global) {'; ^
     $envOverride = 'function Set-EnvVar { param([string]$Name, [string]$Value, [switch]$Global) }'; ^
     $hookOverride = '. \"$env:SCOOP\.portable\environment.ps1\"'; ^
-    $patchMarker = '# scoop-portable-patches: 4'; ^
+    $patchMarker = '# scoop-portable-patches: 5'; ^
     function portableText($file, $text) { ^
       switch -CaseSensitive ($file) { ^
         'lib/core.ps1' { return $text.replace('$env:XDG_CONFIG_HOME', '\"$env:SCOOP\.portable\"') } ^
@@ -864,7 +863,7 @@ goto :eof
     call :patch_scoop
     exit /B
   )
-  findstr /L /C:"# scoop-portable-patches: 4" "%SCOOP%\apps\scoop\current\lib\system.ps1" >NUL 2>NUL || call :patch_scoop
+  findstr /L /C:"# scoop-portable-patches: 5" "%SCOOP%\apps\scoop\current\lib\system.ps1" >NUL 2>NUL || call :patch_scoop
 goto :eof
 
 
@@ -1144,16 +1143,33 @@ goto :eof
 exit /B 1
 
 
-:getx_PATH
-  :: args: <RESULT_VAR>
-  :: counterpart to "setx PATH" command
-  setlocal
-  set result_var=%~1
-  for /F "tokens=2* skip=2" %%a in ('reg query "HKEY_CURRENT_USER\Environment" /v PATH') do (
-    set "value=%%b"
-  )
-  endlocal & set "%result_var%=%value%"
-goto :eof
+:save_user_PATH
+  :: Called with delayed expansion enabled. Pass the filename through the environment,
+  :: not PowerShell source text; neither the raw PATH nor a Unicode filename crosses stdout.
+  :: CreateNew in the helper prevents a collision from overwriting a recovery snapshot.
+  set "scoop_path_snapshot=!TEMP!\scoop-portable-path-!RANDOM!-!RANDOM!.json"
+  powershell -noprofile -ex unrestricted -command ^
+    "$ErrorActionPreference = 'Stop'; try {" ^
+    "  . ($env:SCOOP + '\.portable\environment.ps1'); Save-ScoopPortableUserPath $env:scoop_path_snapshot;" ^
+    "} catch { [Console]::Error.WriteLine('ERROR: Could not save user PATH: ' + $_.Exception.Message); exit 1 }; exit 0"
+exit /B
+
+
+:restore_user_PATH
+  :: Registry recovery must not depend on loading Scoop's possibly damaged files after
+  :: a failed update. Only load its notifier after restoration has already succeeded.
+  :: A failed restore exits before cleanup so its snapshot remains available for recovery.
+  :: Scoop's notifier is best effort and does not report native delivery failures.
+  :: Notification and snapshot cleanup failures warn; they do not undo a successful restore.
+  powershell -noprofile -ex unrestricted -command ^
+    "$ErrorActionPreference = 'Stop'; try {" ^
+    "  . ($env:SCOOP + '\.portable\environment.ps1'); $changed = Restore-ScoopPortableUserPath $env:scoop_path_snapshot;" ^
+    "} catch { [Console]::Error.WriteLine('ERROR: Could not restore user PATH. Snapshot retained at ' + $env:scoop_path_snapshot + ': ' + $_.Exception.Message); exit 1 };" ^
+    "if ($changed) { Write-Host 'Restored user PATH.'; try {" ^
+    "  . ($env:SCOOP + '\apps\scoop\current\lib\system.ps1'); Publish-EnvVar;" ^
+    "} catch { Write-Warning ('User PATH was restored, but could not notify Windows: ' + $_.Exception.Message) } };" ^
+    "try { [IO.File]::Delete($env:scoop_path_snapshot) } catch { Write-Warning ('User PATH was restored, but could not remove snapshot ' + $env:scoop_path_snapshot + ': ' + $_.Exception.Message) }; exit 0"
+exit /B
 
 
 :: ============================================================================
@@ -1427,10 +1443,83 @@ goto :eof
 # Captures app-owned hook settings and reconciles the environment of the selected
 # version. Hook scripts run only in Scoop's installation process; loading a CMD
 # session replays saved data and never writes persistent environment variables.
+# Explicit updates also use this helper to restore the user's original registry
+# PATH if an app installer changes it outside Scoop's patched environment helpers.
 
 # Set-EnvVar carries no type information. These shared search variables have list
 # semantics; guessing from semicolons would turn ordinary scalar settings into lists.
 $script:ScoopPortableSearchPaths = @('PKG_CONFIG_PATH', 'CMAKE_PREFIX_PATH')
+
+function Save-ScoopPortableUserPath([string]$SnapshotFile, [string]$RegistrySubKey = 'Environment') {
+    $ErrorActionPreference = 'Stop'
+    # RegistrySubKey is internal: tests use an isolated HKCU key, while the wrapper
+    # always uses Environment. Never store a destination key in the snapshot itself.
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($RegistrySubKey)
+    $snapshot = @{ exists = $false; kind = $null; value = $null }
+    try {
+        if ($key -and ($key.GetValueNames() -contains 'Path')) {
+            $snapshot.exists = $true
+            $snapshot.kind = $key.GetValueKind('Path').ToString()
+            # Refuse an unexpected type before updating, rather than coercing and
+            # potentially destroying a registry value we cannot faithfully restore.
+            if ($snapshot.kind -notin 'String', 'ExpandString') { throw 'User PATH has an unsupported registry type' }
+            # Keep %NAME% references literal instead of freezing their current expansion.
+            $snapshot.value = $key.GetValue('Path', $null, 'DoNotExpandEnvironmentNames')
+        }
+    } finally {
+        if ($key) { $key.Dispose() }
+    }
+
+    # Exclusive creation protects retained snapshots, and explicit UTF-16 preserves
+    # Unicode in Windows PowerShell regardless of its default text-file encoding.
+    $stream = [IO.File]::Open($SnapshotFile, 'CreateNew', 'Write', 'None')
+    $writer = $null
+    try {
+        $writer = [IO.StreamWriter]::new($stream, [Text.Encoding]::Unicode)
+        $writer.Write(($snapshot | ConvertTo-Json -Compress))
+    } finally {
+        if ($writer) { $writer.Dispose() } else { $stream.Dispose() }
+    }
+}
+
+function Restore-ScoopPortableUserPath([string]$SnapshotFile, [string]$RegistrySubKey = 'Environment') {
+    $ErrorActionPreference = 'Stop'
+    Set-StrictMode -Version Latest
+    $snapshot = Get-Content -LiteralPath $SnapshotFile -Raw -Encoding Unicode | ConvertFrom-Json
+    # A damaged recovery file must fail before any registry write. In particular,
+    # a missing/null value must not be interpreted as a request to remove PATH.
+    if ($snapshot.exists -isnot [bool] -or ($snapshot.exists -and
+        ($snapshot.kind -notin 'String', 'ExpandString' -or $snapshot.value -isnot [string]))) {
+        throw 'Invalid user PATH snapshot'
+    }
+
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($RegistrySubKey)
+    try {
+        $exists = $key -and ($key.GetValueNames() -contains 'Path')
+        # Compare raw text exactly, including case. Reading first also lets an
+        # unchanged PATH succeed without write permission or creating a missing key.
+        if ($snapshot.exists -eq $exists -and (-not $exists -or
+            ($snapshot.kind -eq $key.GetValueKind('Path').ToString() -and
+            [string]::Equals($snapshot.value, $key.GetValue('Path', $null, 'DoNotExpandEnvironmentNames'), 'Ordinal')))) {
+            return $false
+        }
+    } finally {
+        if ($key) { $key.Dispose() }
+    }
+
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($RegistrySubKey)
+    try {
+        # SetValue preserves an existing empty string; DeleteValue is only for an
+        # originally absent PATH. Scoop's setter conflates these and is patched out.
+        if ($snapshot.exists) { $key.SetValue('Path', $snapshot.value, [Microsoft.Win32.RegistryValueKind]$snapshot.kind) }
+        else { $key.DeleteValue('Path', $false) }
+    } finally {
+        $key.Dispose()
+    }
+    # The wrapper owns notification and file cleanup. Keeping them outside registry
+    # restoration leaves this function usable for isolated tests and manual recovery.
+    return $true
+}
 
 function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
     $ErrorActionPreference = 'Stop'
