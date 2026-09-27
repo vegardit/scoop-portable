@@ -61,6 +61,51 @@ Once installed, subsequent executions of `scoop-portable.cmd` load scoop environ
 
 An app installed in the `scoop-portable.cmd` can be launched from anywhere using: `scoop-portable.cmd <app> [app args]`
 
+### Upgrading and troubleshooting
+
+#### Missing app settings after an upgrade
+
+Apps installed with an older version of scoop-portable may be missing environment settings
+that the current version needs to load for them.
+To recreate these settings, load `scoop-portable.cmd` and run `scoop update --force <app>`,
+replacing `<app>` with the affected app's name.
+Then load `scoop-portable.cmd` again to apply the restored settings.
+
+#### Gradle still uses an old directory
+
+An older version of scoop-portable may have left a `GRADLE_USER_HOME` variable in your Windows user environment.
+Gradle keeps an existing value, so forcing an update alone may still leave it using the old directory.
+
+Check `GRADLE_USER_HOME` under **User variables** in Windows' **Environment Variables** dialog.
+If you confirm that the value was left by this portable installation or its former location,
+record it before removing it.
+Leave values that you configured intentionally in place.
+
+After removing the leftover variable, open a new Command Prompt and load `scoop-portable.cmd`.
+Run `scoop update --force gradle`, then load `scoop-portable.cmd` again to apply the restored setting.
+
+#### Errors while saving app settings
+
+If Scoop reports that it could not save settings, first resolve the problem described in the error message,
+such as a file access error.
+The next step depends on which settings could not be saved.
+
+If the message mentions **hook settings**, retry the installation or update.
+These settings are collected while the app's installation scripts run,
+so `scoop reset <app>` cannot recreate them.
+
+If the message mentions the app's **portable settings**, run `scoop reset <app>`
+in a Command Prompt where you have loaded `scoop-portable.cmd`.
+This rebuilds the settings from the information already saved for that app.
+For a JDK, the reset also switches the active Java version to that JDK.
+
+#### Stale values in an existing Command Prompt
+
+An open Command Prompt can retain old environment values after an app's settings change or the app is removed.
+Loading `scoop-portable.cmd` again does not necessarily clear those inherited values.
+To start with a fresh environment, open a new Command Prompt from the Windows Start menu
+and load `scoop-portable.cmd` there.
+
 
 ## <a name="license"></a>License
 
