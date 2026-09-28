@@ -82,6 +82,18 @@ To recreate these settings, load `scoop-portable.cmd` and run `scoop update --fo
 replacing `<app>` with the affected app's name.
 Then load `scoop-portable.cmd` again to apply the restored settings.
 
+#### App settings contain an environment variable name
+
+An older version of scoop-portable may have saved a reference to another environment variable
+as literal text instead of using its value.
+For example, Fork's `FORKGITINSTANCE` setting may contain `$env:GIT_INSTALL_ROOT`
+instead of the directory of your Git installation.
+
+Load `scoop-portable.cmd` so that settings from installed apps are available,
+then run `scoop reset <app>` to recreate the affected app's settings.
+For Fork, run `scoop reset fork` after installing Git in the portable environment.
+This repair does not require reinstalling the app.
+
 #### Gradle still uses an old directory
 
 An older version of scoop-portable may have left a `GRADLE_USER_HOME` variable in your Windows user environment.
@@ -99,18 +111,28 @@ Run `scoop update --force gradle`, then load `scoop-portable.cmd` again to apply
 
 If Scoop reports that it could not save settings, first resolve the problem described in the error message,
 such as a file access error.
-The next step depends on which settings could not be saved.
+Run the recovery commands below in a Command Prompt where you have loaded `scoop-portable.cmd`.
 
 If the message mentions **hook settings**, retry the installation or update.
 These settings are collected while the app's installation scripts run,
 so `scoop reset <app>` cannot recreate them.
 
-If the message mentions the app's **portable settings**, run `scoop reset <app>`
-in a Command Prompt where you have loaded `scoop-portable.cmd`.
-This rebuilds the settings from the information already saved for that app.
+If the message mentions **manifest settings**, retry the operation that failed.
+For a failed installation or update, Scoop still needs to finish its installation steps;
+`scoop reset <app>` cannot complete them.
+If the error occurred during a reset, retry that reset.
+
+If retrying an update reports that the app is not installed or asks you to reinstall it,
+run `scoop install <app>`.
+Use the original bucket or manifest if you installed the app from a specific source.
+Include any architecture option you selected for the original installation, such as `--arch 32bit`.
+This can be necessary after an interrupted forced update.
+
+If the message mentions **portable settings**, run `scoop reset <app>`.
+This reapplies the settings declared by the app and combines them with its saved hook settings.
 For a JDK, the reset also switches the active Java version to that JDK.
 
-To rebuild portable settings for all installed apps from the same saved information,
+To rebuild portable settings for all installed apps,
 use `scoop reset --all`, `scoop reset -a`, or `scoop reset *`.
 These bulk resets preserve the JDK selection recorded by scoop-portable.
 

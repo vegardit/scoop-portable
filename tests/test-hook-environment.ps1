@@ -1,4 +1,4 @@
-# CI regression fixture for portable hook settings, shared search paths and saved-state ownership.
+# CI regression fixture for portable declarations, hook settings, shared search paths and saved-state ownership.
 # Uses Scoop's real helper bodies with a registry writer that always fails, so
 # a missing patch cannot modify the user's environment during this test.
 param([Parameter(Mandatory = $true)][string]$PortableRoot)
@@ -77,21 +77,22 @@ function Assert-Path($Session, [string]$Path, [int]$Count = 1) {
     }
 }
 
-function Invoke-InstallHooks([string]$Name, $Manifest) {
+function Invoke-InstallHooks([string]$Name, $Manifest, [string]$Architecture = '64bit') {
     # These variables are supplied by install_app to Invoke-HookScript in Scoop.
     $app = $Name
     $global = $false
     $dir = $original_dir = Join-Path $fixtureRoot "apps\$Name\1"
     $persist_dir = Join-Path $fixtureRoot "persist\$Name"
     $Manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath "$dir\manifest.json"
-    Invoke-HookScript -HookType pre_install -Manifest $Manifest -Arch 64bit
-    Invoke-HookScript -HookType installer -Manifest $Manifest -Arch 64bit
+    @{ architecture = $Architecture } | ConvertTo-Json | Set-Content -LiteralPath "$dir\install.json"
+    Invoke-HookScript -HookType pre_install -Manifest $Manifest -Arch $Architecture
+    Invoke-HookScript -HookType installer -Manifest $Manifest -Arch $Architecture
     # Scoop switches to the junction before applying declarations and post_install.
     $dir = Join-Path $fixtureRoot "apps\$Name\current"
     $scoopPathEnvVar = 'PATH'
-    env_add_path $Manifest $dir $false 64bit
-    env_set $Manifest $false 64bit
-    Invoke-HookScript -HookType post_install -Manifest $Manifest -Arch 64bit
+    env_add_path $Manifest $dir $false $Architecture
+    env_set $Manifest $false $Architecture
+    Invoke-HookScript -HookType post_install -Manifest $Manifest -Arch $Architecture
 }
 
 try {
@@ -142,6 +143,7 @@ function get_config($Name) { $false }
         Read-ScoopFunction install is_in_dir
         Read-ScoopFunction install env_add_path
         Read-ScoopFunction install env_set
+        Read-ScoopFunction install env_rm
         Read-ScoopFunction install Invoke-HookScript
     ) -join [Environment]::NewLine | Set-Content -LiteralPath "$lib\install.ps1"
     $env:SCOOP = $fixtureRoot
@@ -232,6 +234,12 @@ set "PORTABLE_TEST_AFTER="
 set "PORTABLE_TEST_TEXT="
 set "PORTABLE_TEST_EMPTY=stale"
 set "PORTABLE_TEST_SCALAR="
+set "PORTABLE_TEST_DEP="
+set "PORTABLE_TEST_REFERENCE="
+set "PORTABLE_TEST_REFERENCE_BRACED="
+set "PORTABLE_TEST_REFERENCE_PERSIST="
+set "PORTABLE_TEST_REFERENCE_POST="
+set "PORTABLE_TEST_REFERENCE_EMPTY=stale"
 set "PKG_CONFIG_PATH=C:\caller-pkg"
 set "CMAKE_PREFIX_PATH=C:\caller-cmake"
 if "%~1" == "empty" (
@@ -253,6 +261,11 @@ powershell -noprofile -file "%~dp0read-session.ps1"
     text = $env:PORTABLE_TEST_TEXT
     empty = $env:PORTABLE_TEST_EMPTY
     scalar = $env:PORTABLE_TEST_SCALAR
+    reference = $env:PORTABLE_TEST_REFERENCE
+    braced = $env:PORTABLE_TEST_REFERENCE_BRACED
+    referencePersist = $env:PORTABLE_TEST_REFERENCE_PERSIST
+    referencePost = $env:PORTABLE_TEST_REFERENCE_POST
+    referenceEmpty = $env:PORTABLE_TEST_REFERENCE_EMPTY
     pkg = $env:PKG_CONFIG_PATH
     cmake = $env:CMAKE_PREFIX_PATH
     path = $env:PATH
@@ -277,6 +290,152 @@ powershell -noprofile -file "%~dp0read-session.ps1"
     Assert-Path $session 'C:\registry-only' 0
     Assert-Path $session "$fixtureRoot\apps\tool.10.3\current\bin"
     Assert-Path $session "$fixtureRoot\apps\tool\current\bin" 0
+
+    # The consumer sorts before its dependency. Neither saving nor loading may
+    # rely on filename order or inherit the installing PowerShell's environment.
+    foreach ($name in 'z-dependency', 'a-consumer') {
+        New-Item -ItemType Directory -Path "$fixtureRoot\apps\$name\1" | Out-Null
+        New-Item -ItemType Junction -Path "$fixtureRoot\apps\$name\current" -Target "$fixtureRoot\apps\$name\1" | Out-Null
+    }
+    '{"version":"1","env_set":{"PORTABLE_TEST_DEP":"$dir"}}' |
+        Set-Content -LiteralPath "$fixtureRoot\apps\z-dependency\current\manifest.json"
+    $referenceManifest = @'
+{
+    "version": "1",
+    "pre_install": "Set-EnvVar PORTABLE_TEST_REFERENCE pre",
+    "env_set": {"PORTABLE_TEST_REFERENCE": "wrong generic value"},
+    "architecture": {
+        "32bit": {"env_set": {
+            "PORTABLE_TEST_REFERENCE": "$env:PORTABLE_TEST_DEP",
+            "PORTABLE_TEST_REFERENCE_BRACED": "${env:PORTABLE_TEST_DEP}\\braced",
+            "PORTABLE_TEST_REFERENCE_PERSIST": "$persist_dir\\$env:PORTABLE_TEST_PART",
+            "PORTABLE_TEST_REFERENCE_EMPTY": "$env:PORTABLE_TEST_ABSENT",
+            "PORTABLE_TEST_REFERENCE_POST": "$env:PORTABLE_TEST_DEP"
+        }},
+        "64bit": {"env_set": {"PORTABLE_TEST_REFERENCE": "wrong architecture"}}
+    },
+    "post_install": "Set-EnvVar PORTABLE_TEST_REFERENCE_POST \"$dir\\post\""
+}
+'@
+    $referenceManifest | Set-Content -LiteralPath "$fixtureRoot\apps\a-consumer\current\manifest.json"
+    @'
+# Apply declarations in Scoop's process and dependency order, before returning to the saver.
+$ErrorActionPreference = 'Stop'
+$fixtureRoot = $env:SCOOP
+. "$fixtureRoot\apps\scoop\current\lib\system.ps1"
+. "$fixtureRoot\apps\scoop\current\lib\install.ps1"
+'@ + "`r`nfunction Invoke-InstallHooks {`r`n" + ${function:Invoke-InstallHooks}.ToString() + "`r`n}`r`n" + @'
+foreach ($name in 'z-dependency', 'a-consumer') {
+    $manifest = Get-Content -LiteralPath "$fixtureRoot\apps\$name\current\manifest.json" -Raw | ConvertFrom-Json
+    Invoke-InstallHooks $name $manifest 32bit
+}
+'@ | Set-Content -LiteralPath "$fixtureRoot\install-declarations.ps1"
+    $env:PORTABLE_TEST_DEP = 'C:\stale-parent'
+    $env:PORTABLE_TEST_PART = 'settings'
+    $env:PORTABLE_TEST_ABSENT = $null
+    & powershell -noprofile -ex unrestricted -file "$fixtureRoot\install-declarations.ps1"
+    if ($LASTEXITCODE -ne 0) { throw 'Declaration installation fixture failed' }
+    Invoke-Wrapper 'install a-consumer --no-update-scoop'
+    $session = Read-Session
+    Assert-Value $session.reference "$fixtureRoot\apps\z-dependency\current" 'reference to a newly installed dependency'
+    Assert-Value $session.braced "$fixtureRoot\apps\z-dependency\current\braced" 'braced environment reference'
+    Assert-Value $session.referencePersist "$fixtureRoot\persist\a-consumer\settings" 'mixed persist and environment references'
+    Assert-Value $session.referenceEmpty $null 'unset environment reference'
+    Assert-Value $session.referencePost "$fixtureRoot\apps\a-consumer\current\post" 'post-install overrides a declaration'
+
+    # The general shim is a no-op. Reset coverage must really reapply declarations
+    # in a child process, otherwise it only verifies replay of the installation record.
+    @'
+# Run the environment portion of Scoop's reset, with hooks intentionally absent.
+param([string]$AppName)
+$ErrorActionPreference = 'Stop'
+. "$env:SCOOP\apps\scoop\current\lib\system.ps1"
+. "$env:SCOOP\apps\scoop\current\lib\install.ps1"
+$app = $AppName
+$global = $false
+$original_dir = "$env:SCOOP\apps\$app\1"
+$dir = "$env:SCOOP\apps\$app\current"
+$persist_dir = "$env:SCOOP\persist\$app"
+$manifest = Get-Content -LiteralPath "$dir\manifest.json" -Raw | ConvertFrom-Json
+$architecture = (Get-Content -LiteralPath "$dir\install.json" -Raw | ConvertFrom-Json).architecture
+env_rm $manifest $global $architecture
+env_set $manifest $global $architecture
+'@ | Set-Content -LiteralPath "$fixtureRoot\reset-declarations.ps1"
+    @'
+@echo off
+if /I not "%~1"=="reset" exit /B 0
+powershell -noprofile -ex unrestricted -file "%~dp0..\reset-declarations.ps1" "%~2"
+exit /B %errorlevel%
+'@ | Set-Content -LiteralPath "$fixtureRoot\shims\scoop.cmd"
+    try {
+        $env:PORTABLE_TEST_DEP = "$fixtureRoot\apps\z-dependency\current\reset"
+        Invoke-Wrapper 'reset a-consumer'
+        $session = Read-Session
+        Assert-Value $session.reference $env:PORTABLE_TEST_DEP 'reset captures a changed reference'
+        Assert-Value $session.referencePost "$fixtureRoot\apps\a-consumer\current\post" 'reset retains post-install settings'
+
+        $declarationRecord = "$fixtureRoot\apps\a-consumer\current\.scoop-portable-env.json"
+        $originalDeclarations = Get-Content -LiteralPath $declarationRecord -Raw
+        $lock = [IO.File]::Open($declarationRecord, 'Open', 'Read', 'Read')
+        try {
+            $env:PORTABLE_TEST_DEP = "$fixtureRoot\apps\z-dependency\current\retry"
+            Invoke-Wrapper 'reset a-consumer' 1
+            if ((Get-Content -LiteralPath "$fixtureRoot\wrapper.log" -Raw) -notlike '*could not save manifest settings*') {
+                throw 'A declaration capture failure did not explain how to repair it'
+            }
+            Assert-Value (Get-Content -LiteralPath $declarationRecord -Raw) $originalDeclarations 'failed capture preserves the complete record'
+        } finally {
+            $lock.Dispose()
+        }
+        Invoke-Wrapper 'reset a-consumer'
+        Assert-Value (Read-Session).reference $env:PORTABLE_TEST_DEP 'capture can be retried after a blocked write'
+
+        # Simulate stored values from the former root, then reset at the new root.
+        # The nested-root case catches accidentally rebasing freshly captured
+        # declarations using the older origin still needed by the retained hooks.
+        $originalDeclarations = Get-Content -LiteralPath $declarationRecord -Raw
+        $escapedRoot = ($fixtureRoot | ConvertTo-Json -Compress).Trim('"')
+        foreach ($previousRoot in 'Z:\previous-scoop', (Split-Path $fixtureRoot -Parent)) {
+            $escapedPreviousRoot = ($previousRoot | ConvertTo-Json -Compress).Trim('"')
+            $originalDeclarations.Replace($escapedRoot, $escapedPreviousRoot) | Set-Content -LiteralPath $declarationRecord
+            Invoke-Wrapper 'update --all'
+            $session = Read-Session
+            Assert-Value $session.reference "$fixtureRoot\apps\z-dependency\current\retry" 'relocated dependency reference'
+            Assert-Value $session.referencePersist "$fixtureRoot\persist\a-consumer\settings" 'relocated persist reference'
+            Assert-Value $session.referencePost "$fixtureRoot\apps\a-consumer\current\post" 'relocated post-install setting'
+            $env:PORTABLE_TEST_DEP = "$fixtureRoot\apps\z-dependency\current\moved"
+            Invoke-Wrapper 'reset a-consumer'
+            $session = Read-Session
+            Assert-Value $session.reference $env:PORTABLE_TEST_DEP 'reset refreshes declaration origins after a move'
+            Assert-Value $session.referencePost "$fixtureRoot\apps\a-consumer\current\post" 'reset preserves hook origins after a move'
+        }
+
+        # An older installation can have hook records but no declaration section.
+        # Reset must add that section without discarding the saved post-install value.
+        $legacyRecord = Get-Content -LiteralPath $declarationRecord -Raw | ConvertFrom-Json
+        $legacyRecord.PSObject.Properties.Remove('declarations')
+        $legacyRecord | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $declarationRecord
+        $env:PORTABLE_TEST_DEP = "$fixtureRoot\apps\z-dependency\current\repaired"
+        Invoke-Wrapper 'reset a-consumer'
+        $session = Read-Session
+        Assert-Value $session.reference $env:PORTABLE_TEST_DEP 'reset repairs a legacy declaration record'
+        Assert-Value $session.referencePost "$fixtureRoot\apps\a-consumer\current\post" 'legacy repair retains hook settings'
+
+        $reducedManifest = $referenceManifest | ConvertFrom-Json
+        $reducedManifest.architecture.'32bit'.env_set.PSObject.Properties.Remove('PORTABLE_TEST_REFERENCE_BRACED')
+        $reducedManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$fixtureRoot\apps\a-consumer\current\manifest.json"
+        Invoke-Wrapper 'reset a-consumer'
+        Assert-Value (Read-Session).braced $null 'removed declaration is pruned'
+        '{"version":"2"}' | Set-Content -LiteralPath "$fixtureRoot\apps\a-consumer\current\manifest.json"
+        Invoke-Wrapper 'reset a-consumer'
+        $session = Read-Session
+        Assert-Value $session.reference 'pre' 'empty declaration snapshot preserves earlier hook settings'
+        Assert-Value $session.referencePersist $null 'empty declaration snapshot drops obsolete declarations'
+        Assert-Value $session.referencePost "$fixtureRoot\apps\a-consumer\current\post" 'empty declaration snapshot preserves later hooks'
+        Write-Host 'Portable declaration capture regressions passed.'
+    } finally {
+        '@exit /B 0' | Set-Content -LiteralPath "$fixtureRoot\shims\scoop.cmd"
+    }
 
     # A forced bulk update can change evaluated hook values while the manifest
     # bytes stay the same. The wrapper must compare captured state as well.

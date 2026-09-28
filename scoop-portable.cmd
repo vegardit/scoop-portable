@@ -639,7 +639,7 @@ goto :eof
 
 
 :save_active_versions_of_changed_apps
-  :: saves each app whose manifest or captured hooks differ from their snapshots, including new apps.
+  :: saves each app whose manifest or captured environment differs from its snapshots, including new apps.
   :: fc also fails for apps without a current manifest, which save_active_version then skips.
   :: keep_selected_jdk: a changed JDK must not take JAVA_HOME from the selected one, because
   :: the JDK is selected with "scoop reset <jdk>" (or by naming it in "scoop update <jdk>")
@@ -649,7 +649,7 @@ goto :eof
   for /F %%f in ('dir /B "%SCOOP%\apps\*" 2^>NUL') do (
     set "app_changed="
     fc /B "%SCOOP%\apps\%%~f\current\manifest.json" "%SCOOP%\.portable\active_versions\%%~f.json" >NUL 2>&1 || set "app_changed=true"
-    REM A forced update can produce different hook settings without changing the manifest.
+    REM A forced update or reset can change captured values without changing the manifest.
     if exist "%SCOOP%\apps\%%~f\current\.scoop-portable-env.json" (
       fc /B "%SCOOP%\apps\%%~f\current\.scoop-portable-env.json" "%SCOOP%\.portable\active_versions\%%~f.env_hooks" >NUL 2>&1 || set "app_changed=true"
     ) else if exist "%SCOOP%\.portable\active_versions\%%~f.env_hooks" (
@@ -735,7 +735,7 @@ exit /B 0
     $shortcutFunctions = 'function create_startmenu_shortcuts($manifest, $dir, $global, $arch) {', 'function startmenu_shortcut([System.IO.FileInfo] $target, $shortcutName, $arguments, [System.IO.FileInfo]$icon, $global) {'; ^
     $envOverride = 'function Set-EnvVar { param([string]$Name, [string]$Value, [switch]$Global) }'; ^
     $hookOverride = '. \"$env:SCOOP\.portable\environment.ps1\"'; ^
-    $patchMarker = '# scoop-portable-patches: 6'; ^
+    $patchMarker = '# scoop-portable-patches: 7'; ^
     $importStart = 'foreach ($item in $import.config.PSObject.Properties) {'; ^
     $importGuard = ^
       '# scoop-portable: Imports bypass the CMD install guard. Check all apps before applying the Scoopfile.', ^
@@ -818,7 +818,7 @@ exit /B %errorlevel%
   ::    let scoop write. And as the shims and modules folders never get into the registry, scoop reports adding
   ::    them ("Adding ...\shims to your path.", "Adding ...\modules to your PowerShell module path.") whenever it
   ::    creates a shim or installs a module
-  :: 4) install.ps1: the generated helper captures app hook settings without registry writes.
+  :: 4) install.ps1: the generated helper captures app declarations and hook settings without registry writes.
   ::    Its source is embedded below to keep distribution to one batch file. The marker is
   ::    written only after both the helper and its load statement are installed.
   ::
@@ -849,6 +849,7 @@ exit /B %errorlevel%
       $new = $old = Get-Content -LiteralPath ($lib + '\install.ps1') -Raw; ^
       $new = portableText 'lib/install.ps1' $old; ^
       if (-not $new.contains('function Invoke-HookScript {')) { warn 'function Invoke-HookScript is no longer defined in lib\install.ps1' }; ^
+      if (-not $new.contains('function env_set(')) { warn 'function env_set is no longer defined in lib\install.ps1' }; ^
       if ($old -ne $new) { Set-Content -NoNewline -LiteralPath ($lib + '\install.ps1') -Value $new }; ^
     } else { warn 'lib\install.ps1 is missing' }; ^
     ^
@@ -903,7 +904,7 @@ goto :eof
     call :patch_scoop
     exit /B
   )
-  findstr /L /C:"# scoop-portable-patches: 6" "%SCOOP%\apps\scoop\current\lib\system.ps1" >NUL 2>NUL || call :patch_scoop
+  findstr /L /C:"# scoop-portable-patches: 7" "%SCOOP%\apps\scoop\current\lib\system.ps1" >NUL 2>NUL || call :patch_scoop
 goto :eof
 
 
@@ -1529,8 +1530,8 @@ goto :eof
 goto :eof
 :portable_environment_source
 # Generated as .portable/environment.ps1 from the distribution batch file.
-# Captures app-owned hook settings and reconciles the environment of the selected
-# version. Hook scripts run only in Scoop's installation process; loading a CMD
+# Captures app declarations and hook settings and reconciles the selected version's
+# environment. Capture runs in Scoop's install/reset process; loading a CMD
 # session replays saved data and never writes persistent environment variables.
 # Refresh and uninstall share ownership rules for the saved app state.
 # Explicit updates also use this helper to restore the user's original registry
@@ -1684,13 +1685,13 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
     } elseif (Test-Path -LiteralPath "$envDir\$AppName.env_hooks") {
         Remove-Item -LiteralPath "$envDir\$AppName.env_hooks" -Force
     }
-    function Convert-HookValue([string]$Value) {
+    function Convert-CapturedValue([string]$Value, $Origin = $hooks) {
         # Records belong to an installed version. Bind its original directory to
         # "current" and rebase other Scoop paths, including persist and dependencies.
         # One literal replacement pass avoids rebasing the new path again when the
         # installation moves into a subdirectory of its former root.
-        $pattern = '(?:(?<app>' + [regex]::Escape($hooks.app_dir.TrimEnd('\')) + ')|' +
-            [regex]::Escape($hooks.scoop_dir.TrimEnd('\')) + ')(?=[\\/]|$|[;"\s])'
+        $pattern = '(?:(?<app>' + [regex]::Escape($Origin.app_dir.TrimEnd('\')) + ')|' +
+            [regex]::Escape($Origin.scoop_dir.TrimEnd('\')) + ')(?=[\\/]|$|[;"\s])'
         return [regex]::Replace($Value, $pattern, [Text.RegularExpressions.MatchEvaluator]{
             param($match)
             if ($match.Groups['app'].Success) { $appDir } else { $env:SCOOP }
@@ -1702,12 +1703,12 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
     function Read-HookEnvironment($Phase) {
         $lists = $Phase.PSObject.Properties['env_path']
         foreach ($property in $Phase.env_set.PSObject.Properties) {
-            $envValues[$property.Name] = Convert-HookValue $property.Value
+            $envValues[$property.Name] = Convert-CapturedValue $property.Value
             $envPathValues.Remove($property.Name)
             if ($lists) {
                 $paths = $lists.Value.PSObject.Properties[$property.Name]
                 if ($paths) {
-                    $envPathValues[$property.Name] = @($paths.Value | ForEach-Object { Convert-HookValue $_ })
+                    $envPathValues[$property.Name] = @($paths.Value | ForEach-Object { Convert-CapturedValue $_ })
                 }
             }
         }
@@ -1715,14 +1716,23 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
     $pathEntries = @()
     if ($hooks) {
         Read-HookEnvironment $hooks.before
-        $pathEntries += @($hooks.before.env_add_path | ForEach-Object { Convert-HookValue $_ })
+        $pathEntries += @($hooks.before.env_add_path | ForEach-Object { Convert-CapturedValue $_ })
     }
     $envSet = $manifest.PSObject.Properties['env_set']
+    $declarations = if ($hooks) { $hooks.PSObject.Properties['declarations'] }
     if ($envSet -and $envSet.Value) {
         foreach ($property in $envSet.Value.PSObject.Properties) {
-            # Keep the existing declarative substitution contract. Hook values have
-            # already been evaluated by Scoop and must not be executed again.
-            $envValues[$property.Name] = $property.Value.Replace('$dir', $appDir).Replace('$persist_dir', "$env:SCOOP\persist\$AppName")
+            if ($declarations) {
+                $captured = $declarations.Value.env_set.PSObject.Properties[$property.Name]
+                if (-not $captured) { throw "Missing captured setting '$($property.Name)'. Run 'scoop reset $AppName'." }
+                # A captured empty value is authoritative. Never evaluate the manifest
+                # again in this process, which did not install the app's dependencies.
+                $envValues[$property.Name] = Convert-CapturedValue $captured.Value $declarations.Value
+            } else {
+                # Older installations have no declaration capture. Preserve their
+                # simple substitutions until an install, update or reset records it.
+                $envValues[$property.Name] = $property.Value.Replace('$dir', $appDir).Replace('$persist_dir', "$env:SCOOP\persist\$AppName")
+            }
             # A declaration replaces an earlier hook setting; only a later hook can
             # turn this value back into contributions to a shared search list.
             $envPathValues.Remove($property.Name)
@@ -1734,13 +1744,13 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
         # Installer hooks precede declarative settings; post_install follows them.
         # Post-hook removals affect only paths this app owns, never the caller's PATH.
         foreach ($removed in $hooks.after.env_remove_path) {
-            $pattern = Convert-HookValue $removed
+            $pattern = Convert-CapturedValue $removed
             $pathEntries = @($pathEntries | Where-Object {
                 $path = if ([IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $appDir $_ }
                 $path -notlike $pattern
             })
         }
-        $pathEntries += @($hooks.after.env_add_path | ForEach-Object { Convert-HookValue $_ })
+        $pathEntries += @($hooks.after.env_add_path | ForEach-Object { Convert-CapturedValue $_ })
         Read-HookEnvironment $hooks.after
     }
 
@@ -1806,10 +1816,92 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
     }
 }
 
-# install.ps1 defines the upstream function before dot-sourcing this helper.
-# The separate saver process also loads this file, but never invokes hooks.
+# Hooks and declarations update separate parts of one record. Only pre_install
+# starts fresh, so a reinstall drops removed hooks while reset retains them.
+function Read-ScoopPortableEnvironmentRecord([string]$File, [string]$AppDir, [switch]$StartNew) {
+    $state = @{
+        scoop_dir = $env:SCOOP
+        app_dir = $AppDir
+        before = @{ env_set = @{}; env_path = @{}; env_add_path = @() }
+        after = @{ env_set = @{}; env_path = @{}; env_add_path = @(); env_remove_path = @() }
+    }
+    if (-not $StartNew -and (Test-Path -LiteralPath $File)) {
+        $saved = Get-Content -LiteralPath $File -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $state.scoop_dir = $saved.scoop_dir
+        $state.app_dir = $saved.app_dir
+        foreach ($phase in 'before', 'after') {
+            foreach ($property in $saved.$phase.env_set.PSObject.Properties) {
+                $state[$phase].env_set[$property.Name] = $property.Value
+            }
+            $lists = $saved.$phase.PSObject.Properties['env_path']
+            if ($lists) {
+                foreach ($property in $lists.Value.PSObject.Properties) {
+                    $state[$phase].env_path[$property.Name] = @($property.Value)
+                }
+            }
+            $state[$phase].env_add_path = @($saved.$phase.env_add_path)
+        }
+        $state.after.env_remove_path = @($saved.after.env_remove_path)
+        $declarations = $saved.PSObject.Properties['declarations']
+        if ($declarations) { $state.declarations = $declarations.Value }
+    }
+    return $state
+}
+
+function Write-ScoopPortableEnvironmentRecord([string]$File, $State) {
+    # Both capture paths publish a complete document. A blocked write must not
+    # truncate the record that a subsequent reset can still use to restore hooks.
+    $State | ConvertTo-Json -Depth 6 |
+        Set-Content -LiteralPath ($File + '.tmp') -Encoding UTF8 -NoNewline -ErrorAction Stop
+    Move-Item -LiteralPath ($File + '.tmp') -Destination $File -Force -ErrorAction Stop
+}
+
+# install.ps1 defines the upstream functions before dot-sourcing this helper.
+# The separate saver process also loads this file, but only replays saved data.
+if (Test-Path function:\env_set) {
+    $script:ScoopPortableEnvSet = ${function:env_set}
+}
 if (Test-Path function:\Invoke-HookScript) {
     $script:ScoopPortableInvokeHookScript = ${function:Invoke-HookScript}
+}
+
+function env_set($manifest, $global, $arch) {
+    # Scoop has the dependency environment and applies its own expansion rules.
+    # Reading the declared names now captures their values before post_install,
+    # without another expression evaluation or a second Set-EnvVar override.
+    & $script:ScoopPortableEnvSet @PSBoundParameters
+    $portableOriginalDir = Get-Variable original_dir -ValueOnly -ErrorAction SilentlyContinue
+    if ($global -or -not $portableOriginalDir) { return }
+    $portableFile = Join-Path $portableOriginalDir '.scoop-portable-env.json'
+    $portableManifestEnv = arch_specific 'env_set' $manifest $arch
+    if (-not $portableManifestEnv -and -not (Test-Path -LiteralPath $portableFile)) { return }
+    try {
+        $portableState = Read-ScoopPortableEnvironmentRecord $portableFile $portableOriginalDir
+        # Reset can refresh declarations after relocation without rerunning hooks.
+        # Each section must retain the origin of its own values for later rebasing.
+        $portableState.declarations = @{
+            scoop_dir = $env:SCOOP
+            app_dir = $portableOriginalDir
+            env_set = @{}
+        }
+        if ($portableManifestEnv) {
+            foreach ($property in $portableManifestEnv.PSObject.Properties) {
+                # Windows PowerShell removes empty process variables. Store that
+                # outcome explicitly so replay clears an inherited stale value.
+                $portableState.declarations.env_set[$property.Name] = [string][Environment]::GetEnvironmentVariable($property.Name, 'Process')
+            }
+        }
+        Write-ScoopPortableEnvironmentRecord $portableFile $portableState
+    } catch {
+        # This helper also runs before install metadata is saved and post_install runs.
+        # Reset cannot finish that installation. A failed forced update can leave no
+        # recognized version to update, so recovery may require reinstalling instead.
+        throw ("scoop-portable: could not save manifest settings for '$app'. " +
+            "Correct the error at '$portableFile', then retry the failed operation. " +
+            "Reset cannot complete an interrupted installation or update. " +
+            "If an update no longer recognizes the app as installed, reinstall it with 'scoop install' " +
+            "using the original source and any architecture option you selected. $($_.Exception.Message)")
+    }
 }
 
 function Invoke-HookScript {
@@ -1837,30 +1929,7 @@ function Invoke-HookScript {
         return
     }
     $portableFile = Join-Path $portableOriginalDir '.scoop-portable-env.json'
-    $portableState = @{
-        scoop_dir = $env:SCOOP
-        app_dir = $portableOriginalDir
-        before = @{ env_set = @{}; env_path = @{}; env_add_path = @() }
-        after = @{ env_set = @{}; env_path = @{}; env_add_path = @(); env_remove_path = @() }
-    }
-    # Start a new record even when a reinstall removed all hooks. Otherwise old
-    # additions could survive indefinitely in a reused installation directory.
-    if ($HookType -ne 'pre_install' -and (Test-Path -LiteralPath $portableFile)) {
-        $saved = Get-Content -LiteralPath $portableFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-        foreach ($phase in 'before', 'after') {
-            foreach ($property in $saved.$phase.env_set.PSObject.Properties) {
-                $portableState[$phase].env_set[$property.Name] = $property.Value
-            }
-            $lists = $saved.$phase.PSObject.Properties['env_path']
-            if ($lists) {
-                foreach ($property in $lists.Value.PSObject.Properties) {
-                    $portableState[$phase].env_path[$property.Name] = @($property.Value)
-                }
-            }
-            $portableState[$phase].env_add_path = @($saved.$phase.env_add_path)
-        }
-        $portableState.after.env_remove_path = @($saved.after.env_remove_path)
-    }
+    $portableState = Read-ScoopPortableEnvironmentRecord $portableFile $portableOriginalDir -StartNew:($HookType -eq 'pre_install')
     $portablePhase = if ($HookType -eq 'post_install') { 'after' } else { 'before' }
     $portableTarget = $portableState[$portablePhase]
     $portableManifestEnv = if ($portablePhase -eq 'after') { arch_specific 'env_set' $Manifest $ProcessorArchitecture }
@@ -1966,14 +2035,11 @@ function Invoke-HookScript {
     & $script:ScoopPortableInvokeHookScript @PSBoundParameters
 
     $hasSettings = $portableState.before.env_set.Count -or $portableState.before.env_add_path.Count -or
-        $portableState.after.env_set.Count -or $portableState.after.env_add_path.Count -or $portableState.after.env_remove_path.Count
+        $portableState.after.env_set.Count -or $portableState.after.env_add_path.Count -or $portableState.after.env_remove_path.Count -or
+        $portableState.ContainsKey('declarations')
     if ($hasSettings -or (Test-Path -LiteralPath $portableFile)) {
         try {
-            # Replace only after writing a complete JSON document. A failed hook or
-            # blocked write must not silently advertise successfully captured settings.
-            $portableState | ConvertTo-Json -Depth 6 |
-                Set-Content -LiteralPath ($portableFile + '.tmp') -Encoding UTF8 -NoNewline -ErrorAction Stop
-            Move-Item -LiteralPath ($portableFile + '.tmp') -Destination $portableFile -Force -ErrorAction Stop
+            Write-ScoopPortableEnvironmentRecord $portableFile $portableState
         } catch {
             throw "scoop-portable: could not save hook settings for '$app'. Correct access to '$portableFile' and retry the install or update."
         }

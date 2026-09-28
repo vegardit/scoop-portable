@@ -1,6 +1,6 @@
 @echo off
 :: CI test: loads scoop-portable and checks the behavior of its scoop wrapper
-:: (app installs, hook capture, environment refresh and recovery, active version tracking, bulk resets, java switching,
+:: (app installs, declaration and hook capture, environment refresh and recovery, active version tracking, bulk resets, java switching,
 :: exit codes, patching of scoop, relocation with apostrophes in the installation path,
 :: argument forwarding, global-import rejection, safe stash cleanup, and separate updates of scoop itself)
 setlocal
@@ -1206,8 +1206,10 @@ goto :EOF
   >"%lib%\system.ps1" echo function Set-EnvVar {
   >>"%lib%\system.ps1" echo }
   >>"%lib%\system.ps1" echo function Set-EnvVar { param([string]$Name, [string]$Value, [switch]$Global) }
-  >>"%lib%\system.ps1" echo # scoop-portable-patches: 6
+  >>"%lib%\system.ps1" echo # scoop-portable-patches: 7
   >"%lib%\install.ps1" echo function Invoke-HookScript {
+  >>"%lib%\install.ps1" echo }
+  >>"%lib%\install.ps1" echo function env_set($manifest, $global, $arch) {
   >>"%lib%\install.ps1" echo }
   >>"%lib%\install.ps1" echo . "$env:SCOOP\.portable\environment.ps1"
   REM Use the real generated saver: a fake marker alone must not hide a missing helper.
