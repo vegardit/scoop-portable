@@ -11,7 +11,9 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:USERNAME -ne 'noadmin') {
 function Invoke-Wrapper([string]$Arguments, [string]$Log) {
     # Redirect in CMD so expected native stderr does not become a terminating
     # PowerShell error before the wrapper's exit code can be asserted.
-    & $env:ComSpec /D /S /C ('""{0}\.portable\scoop.cmd" {1} >"{2}" 2>&1"' -f $fixture, $Arguments, $Log)
+    # CALL preserves the batch errorlevel when its top-level dispatch ends with
+    # GOTO :EOF; a direct CMD /C invocation reports success instead.
+    & $env:ComSpec /D /S /C ('"call "{0}\.portable\scoop.cmd" {1} >"{2}" 2>&1"' -f $fixture, $Arguments, $Log)
     return $LASTEXITCODE
 }
 
@@ -26,8 +28,13 @@ function Assert-Update([string]$Name, [string]$Value, [string]$Mode = 'change', 
     [IO.File]::Delete("$fixture\notifications.txt")
     $log = "$fixture\$Name.log"
     $expectedExit = if ($ScoopExit) { $ScoopExit } elseif ($Mode -in 'capture-failure', 'restore-failure') { 1 } else { 0 }
-    if ((Invoke-Wrapper 'update --all' $log) -ne $expectedExit) { throw "Wrong exit code for $Name; see $log" }
+    $actualExit = Invoke-Wrapper 'update --all' $log
     $output = Get-Content -LiteralPath $log -Raw
+    if ($actualExit -ne $expectedExit) {
+        # Temporary files disappear with the CI runner, so include their diagnostics in the job log.
+        Write-Host $output
+        throw "Wrong exit code for ${Name}: expected $expectedExit, got $actualExit; see $log"
+    }
     if ($Mode -eq 'capture-failure') {
         if (Test-Path -LiteralPath "$fixture\calls.txt") { throw 'Update ran after snapshot capture failed' }
         if ($output -notlike '*Could not save user PATH*') { throw 'Snapshot failure was not explained' }

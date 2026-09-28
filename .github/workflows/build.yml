@@ -107,7 +107,11 @@ jobs:
     - name: "Test: user PATH recovery after update"
       # This fixture changes HKCU\Environment\Path, so keep it outside the general
       # suite that also runs as the runner account or in a developer's profile.
-      run: echo p@ssw0rd| sudo -u noadmin --stdin powershell -noprofile -ex unrestricted -file "%CD%\tests\test-user-path-update.ps1"
+      # sudo creates a fresh environment from noadmin's profile, which loses GITHUB_ACTIONS.
+      # Forward the runner's marker explicitly so the fixture can keep its CI-only safety check.
+      run: >-
+        echo p@ssw0rd| sudo -u noadmin --stdin cmd /d /s /c
+        "set GITHUB_ACTIONS=%GITHUB_ACTIONS%&& powershell -noprofile -ex unrestricted -file "%CD%\tests\test-user-path-update.ps1""
 
 
     - name: "Test: scoop-portable - different user and path"

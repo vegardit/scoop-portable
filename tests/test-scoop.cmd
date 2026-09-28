@@ -6,11 +6,13 @@
 setlocal
 
 :: https://superuser.com/questions/80485/exit-batch-file-from-subroutine
-if not "%selfWrapped%"=="%~0" (
+if not "%selfWrapped%"=="%~f0" (
   REM this is necessary so that we can use "exit" to terminate the batch file,
   REM and all subroutines, but not the original cmd.exe
-  set "selfWrapped=%~0"
-  %ComSpec% /S /C ""%~0" %*"
+  REM Use an absolute script name so %%~dp0 still finds sibling fixtures after PUSHD,
+  REM including when the workflow starts this test through a relative path.
+  set "selfWrapped=%~f0"
+  %ComSpec% /S /C ""%~f0" %*"
   REM "cmd /c test-scoop.cmd" (as used by CI via sudo) exits with 0 if this script
   REM ends with "goto :EOF", so pass the exit code of the wrapped run on explicitly
   call exit /B %%errorlevel%%
