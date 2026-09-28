@@ -318,15 +318,16 @@ goto :eof
 
   :: Rewrite generated session files. Captured hook records retain their original
   :: roots so the saver can rebase them later and compare their raw snapshots.
+  :: Read the root from the environment so apostrophes stay path data, not PowerShell syntax.
   set fix_paths=^
     Set-StrictMode -version latest; ^
-    $last_dir = (Get-Content -path '%SCOOP%\.portable\last.dir' -first 1).trim() + '\'; ^
+    $last_dir = (Get-Content -path ($env:SCOOP + '\.portable\last.dir') -first 1).trim() + '\'; ^
     ^
     function replaceScoopPaths($file_path) { ^
       if (Test-Path -path $file_path) { ^
         $old = Get-Content -path $file_path -raw; ^
         if (-not [string]::IsNullOrEmpty($old)) { ^
-          $new = $old.replace($last_dir, '%SCOOP%\'); ^
+          $new = $old.replace($last_dir, $env:SCOOP + '\'); ^
           if ($old -ne $new) { ^
             Write-Host "[$(Get-Date -Format 'HH:mm:ss,ff')] --^> Path updated in: $file_path"; ^
             Set-Content -noNewline -path $file_path -value $new; ^
@@ -335,47 +336,48 @@ goto :eof
       } ^
     } ^
     ^
-    replaceScoopPaths '%SCOOP%\.portable\scoop\config.json'; ^
-    replaceScoopPaths '%SCOOP%\shims\scoop'; ^
-    replaceScoopPaths '%SCOOP%\shims\scoop.cmd'; ^
-    replaceScoopPaths '%SCOOP%\shims\scoop.ps1'; ^
+    replaceScoopPaths ($env:SCOOP + '\.portable\scoop\config.json'); ^
+    replaceScoopPaths ($env:SCOOP + '\shims\scoop'); ^
+    replaceScoopPaths ($env:SCOOP + '\shims\scoop.cmd'); ^
+    replaceScoopPaths ($env:SCOOP + '\shims\scoop.ps1'); ^
     ^
-    Get-ChildItem '%SCOOP%\.portable\active_versions' -file -filter *.env_set.cmd  ^| Foreach-Object { replaceScoopPaths $_.FullName }; ^
-    Get-ChildItem '%SCOOP%\.portable\active_versions' -file -filter *.env_add_path ^| Foreach-Object { replaceScoopPaths $_.FullName }; ^
-    Get-ChildItem '%SCOOP%\apps'                      -file -filter *.ini -recurse ^| Foreach-Object { replaceScoopPaths $_.FullName }; ^
-    Get-ChildItem '%SCOOP%\shims'                     -file -filter *.shim         ^| Foreach-Object { replaceScoopPaths $_.FullName }; ^
+    Get-ChildItem ($env:SCOOP + '\.portable\active_versions') -file -filter *.env_set.cmd  ^| Foreach-Object { replaceScoopPaths $_.FullName }; ^
+    Get-ChildItem ($env:SCOOP + '\.portable\active_versions') -file -filter *.env_add_path ^| Foreach-Object { replaceScoopPaths $_.FullName }; ^
+    Get-ChildItem ($env:SCOOP + '\apps')                      -file -filter *.ini -recurse ^| Foreach-Object { replaceScoopPaths $_.FullName }; ^
+    Get-ChildItem ($env:SCOOP + '\shims')                     -file -filter *.shim         ^| Foreach-Object { replaceScoopPaths $_.FullName }; ^
     ^
     function fixAppCurrentVersionSymlinks($app_curr_ver_path) { ^
       $app_name = $app_curr_ver_path.Parent.Name; ^
       if ($app_name -eq 'scoop') { return; } ^
-      $app_manifest = Get-Content -path "%SCOOP%\.portable\active_versions\$app_name.json" -raw ^| ConvertFrom-Json; ^
+      $app_manifest = Get-Content -path ($env:SCOOP + '\.portable\active_versions\' + $app_name + '.json') -raw ^| ConvertFrom-Json; ^
       $app_curr_ver = $app_manifest.version; ^
       if (Test-Path -Path $app_curr_ver_path) { ^
         fsutil reparsepoint delete $app_curr_ver_path ^| out-null; ^
         Remove-Item $app_curr_ver_path -recurse -force; ^
       } ^
-      New-Item -itemType Junction -path $app_curr_ver_path -target "%SCOOP%\apps\$app_name\$app_curr_ver" ^| out-null; ^
+      New-Item -itemType Junction -path $app_curr_ver_path -target ($env:SCOOP + '\apps\' + $app_name + '\' + $app_curr_ver) ^| out-null; ^
       Write-Host "[$(Get-Date -Format 'HH:mm:ss,ff')] --^> Junction updated: $app_curr_ver_path"; ^
       ^
       if ('persist' -in $app_manifest.PSobject.Properties.Name) { ^
         $app_manifest.persist ^| ForEach-Object { ^
           $app_persist_path = $_; ^
-          if ((Get-Item "%SCOOP%\persist\$app_name\$app_persist_path") -is [System.IO.DirectoryInfo]) { ^
+          $persist_path = $env:SCOOP + '\persist\' + $app_name + '\' + $app_persist_path; ^
+          if ((Get-Item $persist_path) -is [System.IO.DirectoryInfo]) { ^
             fsutil reparsepoint delete "$app_curr_ver_path\$app_persist_path" ^| out-null; ^
             Remove-Item "$app_curr_ver_path\$app_persist_path" -recurse -force; ^
-            New-Item -itemType Junction -path "$app_curr_ver_path\$app_persist_path" -target "%SCOOP%\persist\$app_name\$app_persist_path" ^| out-null; ^
+            New-Item -itemType Junction -path "$app_curr_ver_path\$app_persist_path" -target $persist_path ^| out-null; ^
             Write-Host "[$(Get-Date -Format 'HH:mm:ss,ff')] --^> Junction updated: $app_curr_ver_path\$app_persist_path"; ^
           } else { ^
             Remove-Item "$app_curr_ver_path\$app_persist_path" -force; ^
-            New-Item -itemType HardLink -path "$app_curr_ver_path\$app_persist_path" -target "%SCOOP%\persist\$app_name\$app_persist_path" ^| out-null; ^
+            New-Item -itemType HardLink -path "$app_curr_ver_path\$app_persist_path" -target $persist_path ^| out-null; ^
             Write-Host "[$(Get-Date -Format 'HH:mm:ss,ff')] --^> HardLink updated: $app_curr_ver_path\$app_persist_path"; ^
           } ^
         } ^
       } ^
     } ^
     ^
-    Get-ChildItem '%SCOOP%\apps\*\*' -directory -filter current ^| Foreach-Object { fixAppCurrentVersionSymlinks $_ }; ^
-    Get-ChildItem '%SCOOP%\apps\*' -directory ^| Where-Object { -not (Test-Path (Join-Path $_.FullName 'current')) } ^| Foreach-Object { fixAppCurrentVersionSymlinks ([System.IO.DirectoryInfo](Join-Path $_.FullName 'current')) }; ^
+    Get-ChildItem ($env:SCOOP + '\apps\*\*') -directory -filter current ^| Foreach-Object { fixAppCurrentVersionSymlinks $_ }; ^
+    Get-ChildItem ($env:SCOOP + '\apps\*') -directory ^| Where-Object { -not (Test-Path (Join-Path $_.FullName 'current')) } ^| Foreach-Object { fixAppCurrentVersionSymlinks ([System.IO.DirectoryInfo](Join-Path $_.FullName 'current')) }; ^
     #
 
   powershell -noprofile -ex unrestricted -command "%fix_paths%" || exit /B 1
@@ -589,6 +591,9 @@ goto :eof
       call :log_WARN Skipping the import: scoop must update itself first. Install git with "scoop install git" if it is missing, otherwise check the connection to GitHub
       exit /B 1
     )
+    REM A self-update can replace the importer. Check its guard afterwards, on every import,
+    REM independently of the general patch marker; unsupported importers must only block imports.
+    call :ensure_scoop_import_patched || exit /B 1
     call "%SCOOP%\shims\scoop.cmd" %*
     set rc=!errorlevel!
     REM scoop may still try to update itself within an import that runs longer than an hour. A git
@@ -722,24 +727,67 @@ exit /B 0
 :define_scoop_patches
   :: Shared text transformations keep stash verification tied to the patches we actually write.
   :: Cleanup applies them to a stash's own base blobs, without running any saved PowerShell code.
-  :: Keep the marker in sync with ensure_scoop_patched whenever this patch set changes.
+  :: Keep the marker in sync with ensure_scoop_patched whenever the general patches change.
+  :: The import guard is checked separately on every import, after any self-update.
+  :: Match Scoop's comma-space-separated Info tokens and case-insensitive comparison exactly,
+  :: so the guard rejects the same entries Scoop would install globally.
   set scoop_patch_functions=^
     $shortcutFunctions = 'function create_startmenu_shortcuts($manifest, $dir, $global, $arch) {', 'function startmenu_shortcut([System.IO.FileInfo] $target, $shortcutName, $arguments, [System.IO.FileInfo]$icon, $global) {'; ^
     $envOverride = 'function Set-EnvVar { param([string]$Name, [string]$Value, [switch]$Global) }'; ^
     $hookOverride = '. \"$env:SCOOP\.portable\environment.ps1\"'; ^
     $patchMarker = '# scoop-portable-patches: 6'; ^
+    $importStart = 'foreach ($item in $import.config.PSObject.Properties) {'; ^
+    $importGuard = ^
+      '# scoop-portable: Imports bypass the CMD install guard. Check all apps before applying the Scoopfile.', ^
+      '# Throw unwinds Scoop''s dispatcher; abort can return success after exiting only this child script.', ^
+      'foreach ($portableApp in $import.apps) {', ^
+      '    if (''Global install'' -in ($portableApp.Info -split '', '')) {', ^
+      '        throw (''scoop-portable: Cannot import global app {0}. Remove its entry or remove Global install from its Info field to install it locally.'' -f $portableApp.Name)', ^
+      '    }', ^
+      '}'; ^
     function portableText($file, $text) { ^
       switch -CaseSensitive ($file) { ^
         'lib/core.ps1' { return $text.replace('$env:XDG_CONFIG_HOME', '\"$env:SCOOP\.portable\"') } ^
         'lib/shortcuts.ps1' { $lines = @($shortcutFunctions ^| ForEach-Object { $_ + ' }' }) } ^
         'lib/system.ps1' { $lines = @($envOverride, $patchMarker) } ^
         'lib/install.ps1' { $lines = @($hookOverride) } ^
+        'libexec/scoop-import.ps1' { ^
+          $anchors = [regex]::Matches($text, '(?m)^^' + [regex]::Escape($importStart) + '\r?$'); ^
+          if ($anchors.Count -ne 1) { throw 'Cannot locate a unique Scoopfile import boundary' }; ^
+          $newline = [string][char]10; if ($text.Contains([string][char]13 + [char]10)) { $newline = [string][char]13 + [char]10 }; ^
+          $guard = ($importGuard -join $newline) + $newline; ^
+          $position = $anchors[0].Index; ^
+          if ($position -ge $guard.Length -and [string]::Equals($text.Substring($position - $guard.Length, $guard.Length), $guard, [StringComparison]::Ordinal)) { return $text }; ^
+          return $text.Insert($position, $guard); ^
+        } ^
         default { throw 'Unknown portable patch' } ^
       }; ^
       foreach ($line in $lines) { if (-not $text.contains($line)) { $text = $text + $line + [char]10 } }; ^
       return $text; ^
     };
 goto :eof
+
+
+
+:ensure_scoop_import_patched
+  :: Patch only the importer: failure must reject imports without blocking commands needed to
+  :: update Scoop. Reuse the transformation for stash verification, with no separate cached marker.
+  :: The boundary is checked even when the guard is present, so an ambiguous upstream edit fails.
+  :: Preserve UTF-8 bytes, including a BOM and newlines, to match stash verification exactly.
+  setlocal
+  call :define_scoop_patches
+  set patch_import=^
+    $ErrorActionPreference = 'Stop'; ^
+    try { ^
+      $path = $env:SCOOP + '\apps\scoop\current\libexec\scoop-import.ps1'; ^
+      $utf8 = New-Object System.Text.UTF8Encoding($false, $true); ^
+      $old = $utf8.GetString([IO.File]::ReadAllBytes($path)); ^
+      $new = portableText 'libexec/scoop-import.ps1' $old; ^
+      if (-not [string]::Equals($old, $new, [StringComparison]::Ordinal)) { [IO.File]::WriteAllText($path, $new, $utf8) }; ^
+    } catch { Write-Host ('ERROR: scoop-portable: Cannot guard Scoopfile imports: ' + $_.Exception.Message); exit 1 }; ^
+    #
+  powershell -noprofile -ex unrestricted -command "%scoop_patch_functions% %patch_import%" 1>&2
+exit /B %errorlevel%
 
 
 
@@ -785,10 +833,11 @@ goto :eof
   :: The marker is written last and names the patch set: define_scoop_patches and ensure_scoop_patched
   :: must agree, so that installations patched by an older scoop-portable version get re-patched.
   :: The script is one cmd line built with ^, so every line needs an even number of " and no ! may be used
+  :: Read the root from the environment so apostrophes stay path data, not PowerShell syntax.
   set patch_scoop=^
     Set-StrictMode -version latest; ^
     $ErrorActionPreference = 'Stop'; ^
-    $lib = '%SCOOP%\apps\scoop\current\lib'; ^
+    $lib = $env:SCOOP + '\apps\scoop\current\lib'; ^
     function warn($msg) { Write-Warning ('scoop-portable: ' + $msg + ', so the installation may not be fully portable') }; ^
     function countOf($text, $str) { ([regex]::Matches($text, [regex]::Escape($str))).Count }; ^
     if (-not (Test-Path ($lib + '\system.ps1'))) { Write-Host ('ERROR: scoop-portable: lib\system.ps1 is missing, so scoop cannot be patched: ' + $lib); exit 1 }; ^
@@ -983,7 +1032,7 @@ goto :eof
       $changes = @(^& $git --no-replace-objects -C $dir diff-tree -r --no-commit-id --no-abbrev --no-renames --no-ext-diff --no-textconv --ignore-submodules=none $base $tree); ^
       if ($LASTEXITCODE -ne 0) { throw 'Cannot compare stash trees' }; ^
       foreach ($change in $changes) { ^
-        if ($change -cnotmatch '^^:(100644^|100755) \1 ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) M\t(lib/(core^|shortcuts^|system^|install)\.ps1)$') { throw 'Unrecognized stash change' }; ^
+        if ($change -cnotmatch '^^:(100644^|100755) \1 ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) M\t((?:lib/(?:core^|shortcuts^|system^|install)^|libexec/scoop-import)\.ps1)$') { throw 'Unrecognized stash change' }; ^
         $oldObject = $matches[2]; $newObject = $matches[3]; $file = $matches[4]; ^
         $expected = portableText $file (readBlob $oldObject); ^
         if (-not [string]::Equals($expected, (readBlob $newObject), [StringComparison]::Ordinal)) { throw 'Stash contains other edits' }; ^

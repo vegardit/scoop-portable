@@ -61,6 +61,17 @@ Once installed, subsequent executions of `scoop-portable.cmd` load scoop environ
 
 An app installed in the `scoop-portable.cmd` can be launched from anywhere using: `scoop-portable.cmd <app> [app args]`
 
+### Importing a Scoopfile
+
+Use `scoop import <path-or-URL>` to import apps, buckets, and settings from a Scoopfile.
+Files exported from a regular Scoop installation can include globally installed apps.
+scoop-portable rejects a Scoopfile containing any such app before applying its settings, buckets, or apps.
+The error message identifies the first global app in the file.
+
+To import only the local apps, remove the global app entries from the Scoopfile and retry.
+To install those apps in the portable environment instead, remove `Global install` from their `Info` fields,
+keeping any other flags such as `64bit` or `Held package`.
+
 ### Upgrading and troubleshooting
 
 #### Missing app settings after an upgrade

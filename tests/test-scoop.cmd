@@ -1,8 +1,8 @@
 @echo off
 :: CI test: loads scoop-portable and checks the behavior of its scoop wrapper
 :: (app installs, hook capture, environment refresh and recovery, active version tracking, bulk resets, java switching,
-:: exit codes, patching of scoop,
-:: argument forwarding, safe stash cleanup, and separate updates of scoop itself)
+:: exit codes, patching of scoop, relocation with apostrophes in the installation path,
+:: argument forwarding, global-import rejection, safe stash cleanup, and separate updates of scoop itself)
 setlocal
 
 :: https://superuser.com/questions/80485/exit-batch-file-from-subroutine
@@ -89,6 +89,9 @@ pushd %TEMP%
   :: assert installing another scoop-portable is rejected while scoop is on PATH
   call :assert_install_rejected_when_scoop_on_path
 
+  :: Use the real importer and dispatcher, with all external side effects stubbed.
+  call eval powershell -noprofile -ex unrestricted -file "%~dp0test-import.ps1" "%SCOOP%"
+
   :: assert "scoop update" refreshes the saved versions of updated apps and new dependencies,
   :: and does not switch JAVA_HOME to a JDK that was not updated. Also asserts that reset,
   :: update and uninstall are handled in any case
@@ -97,6 +100,7 @@ pushd %TEMP%
 
   :: assert a failed patch fails the command and is retried, and a patch that no longer matches warns
   call :assert_patch_failures_are_reported
+  call eval powershell -noprofile -ex unrestricted -file "%~dp0test-relocation.ps1" "%SCOOP%"
 
   :: assert scoop always starts with the patches applied: explicit updates must not revert them,
   :: and a lib patched by an older scoop-portable version is patched before any command runs
@@ -383,7 +387,8 @@ goto :EOF
   setlocal
   REM a new folder per run that is left behind: no recursive delete based on a variable,
   REM which could remove the wrong folder if the variable were wrong or empty
-  set "stub_root=%TEMP%\scoop-portable-patch-test-%RANDOM%%RANDOM%"
+  REM Apostrophes and spaces must remain path data when the wrapper invokes PowerShell.
+  set "stub_root=%TEMP%\scoop-portable-patch-test-O'Brien %RANDOM%%RANDOM%"
   set "lib=%stub_root%\apps\scoop\current\lib"
   REM fail on setup errors, otherwise a broken fixture could satisfy some assertions
   md "%stub_root%\shims" "%stub_root%\.portable" "%lib%" || exit 1
@@ -750,6 +755,11 @@ goto :EOF
   set "fixture_git=git -C "%repo%" -c user.name=scoop-portable-test -c user.email=test@example.invalid"
   REM fail on setup errors, otherwise a broken fixture could satisfy some assertions
   md "%stub_root%\shims" "%stub_root%\.portable\scoop" "%stub_root%\other-git" "%repo%\lib" || exit 1
+  md "%repo%\libexec" || exit 1
+  REM The shim never executes this importer; only patch generation and Git ownership matter.
+  REM Start unguarded even when the installed importer already contains portable patches.
+  >"%repo%\libexec\scoop-import.ps1" echo foreach ($item in $import.config.PSObject.Properties) {
+  >>"%repo%\libexec\scoop-import.ps1" echo }
   REM Force multiple git.exe candidates even on hosts with only one Git installation.
   REM Keep real Git first; this renamed executable must never be selected or run.
   copy /Y "%SystemRoot%\System32\where.exe" "%stub_root%\other-git\git.exe" >NUL || exit 1
@@ -771,7 +781,7 @@ goto :EOF
   >>"%repo%\lib\install.ps1" echo }
   >"%repo%\README.md" echo readme
   %fixture_git% init -q || exit 1
-  %fixture_git% add .gitattributes lib README.md || exit 1
+  %fixture_git% add .gitattributes lib libexec README.md || exit 1
   %fixture_git% commit -q -m upstream || exit 1
   set "SCOOP=%stub_root%"
 
@@ -779,50 +789,66 @@ goto :EOF
   >>"%repo%\lib\install.ps1" echo # unrecognized legacy change
   %fixture_git% stash push -q -u -m "WIP at 2026-01-01T00:00:00.0000000+00:00" || exit 1
   REM An explicit user stash is kept even if its contents are entirely portable patches.
-  call "%SCOOP%\.portable\scoop.cmd" list >NUL 2>&1
+  REM Import applies both the general patches and the separately checked importer guard.
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
   call :assert_exit_code 0 "patch the stash fixture"
+  REM A guard already in the base commit would leave importer cleanup untested.
+  %fixture_git% diff --quiet -- libexec/scoop-import.ps1
+  call :assert_exit_code 1 "generate an importer patch for stash cleanup"
   %fixture_git% stash push -q -u -m "my own work" || exit 1
   >>"%repo%\lib\core.ps1" echo # changed by the user inside a patched library
   %fixture_git% stash push -q -u -m "WIP at 2026-01-02T00:00:00.0000000+00:00" || exit 1
 
   REM Interleave removable entries with protected ones to exercise stash index changes.
-  call "%SCOOP%\.portable\scoop.cmd" list >NUL 2>&1
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
   call :assert_exit_code 0 "patch the stash fixture"
   %fixture_git% stash push -q -u -m "WIP at 2026-02-01T00:00:00.0000000+00:00" || exit 1
 
   REM Untracked files must survive, even at a path an older wrapper used to patch.
-  call "%SCOOP%\.portable\scoop.cmd" list >NUL 2>&1
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
   call :assert_exit_code 0 "patch the stash fixture"
   >"%repo%\lib\psmodules.ps1" echo # untracked work of the user
   %fixture_git% stash push -q -u -m "WIP at 2026-01-03T00:00:00.0000000+00:00" || exit 1
   REM The working copy contains only generated patches, but the saved index has user work
   REM in the same patched library. Checking only "stash show" would lose that work.
-  call "%SCOOP%\.portable\scoop.cmd" list >NUL 2>&1
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
   call :assert_exit_code 0 "patch the stash fixture"
   copy /Y "%repo%\lib\core.ps1" "%stub_root%\portable-core.ps1" >NUL || exit 1
   >>"%repo%\lib\core.ps1" echo # staged by the user
   %fixture_git% add lib/core.ps1 || exit 1
   copy /Y "%stub_root%\portable-core.ps1" "%repo%\lib\core.ps1" >NUL || exit 1
   %fixture_git% stash push -q -u -m "WIP at 2026-01-04T00:00:00.0000000+00:00" || exit 1
-  call "%SCOOP%\.portable\scoop.cmd" list >NUL 2>&1
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
   call :assert_exit_code 0 "patch the stash fixture"
   >>"%repo%\lib\core.ps1" echo # user work mixed with portable patches
   %fixture_git% stash push -q -u -m "WIP at 2026-01-05T00:00:00.0000000+00:00" || exit 1
   REM The new hook-load patch does not make other edits in install.ps1 disposable.
-  call "%SCOOP%\.portable\scoop.cmd" list >NUL 2>&1
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
   call :assert_exit_code 0 "patch the stash fixture"
   >>"%repo%\lib\install.ps1" echo # user hook customization
   %fixture_git% stash push -q -u -m "WIP at 2026-01-07T00:00:00.0000000+00:00" || exit 1
+  REM Importer edits must also survive, including edits present only in the saved index.
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
+  call :assert_exit_code 0 "patch the stash fixture"
+  copy /Y "%repo%\libexec\scoop-import.ps1" "%stub_root%\portable-import.ps1" >NUL || exit 1
+  >>"%repo%\libexec\scoop-import.ps1" echo # user import customization
+  %fixture_git% stash push -q -u -m "WIP at 2026-01-08T00:00:00.0000000+00:00" || exit 1
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
+  call :assert_exit_code 0 "patch the stash fixture"
+  >>"%repo%\libexec\scoop-import.ps1" echo # staged import customization
+  %fixture_git% add libexec/scoop-import.ps1 || exit 1
+  copy /Y "%stub_root%\portable-import.ps1" "%repo%\libexec\scoop-import.ps1" >NUL || exit 1
+  %fixture_git% stash push -q -u -m "WIP at 2026-01-09T00:00:00.0000000+00:00" || exit 1
   REM PowerShell's normal string equality ignores case, but saved user edits must not be ignored.
-  call "%SCOOP%\.portable\scoop.cmd" list >NUL 2>&1
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
   call :assert_exit_code 0 "patch the stash fixture"
   >"%repo%\lib\core.ps1" echo $confighome = "$env:SCOOP\.portable"
   %fixture_git% stash push -q -u -m "WIP at 2026-01-06T00:00:00.0000000+00:00" || exit 1
 
   REM Generated patches are removable when staged, too.
-  call "%SCOOP%\.portable\scoop.cmd" list >NUL 2>&1
+  call "%SCOOP%\.portable\scoop.cmd" import fixture.json >NUL 2>&1
   call :assert_exit_code 0 "patch the stash fixture"
-  %fixture_git% add lib || exit 1
+  %fixture_git% add lib libexec || exit 1
   %fixture_git% stash push -q -u -m "WIP at 2026-02-02T00:00:00.0000000+00:00" || exit 1
   REM Each stash must be checked against its own base, not the upstream revision just pulled.
   >>"%repo%\lib\core.ps1" echo # next upstream revision
@@ -1186,6 +1212,9 @@ goto :EOF
   >>"%lib%\install.ps1" echo . "$env:SCOOP\.portable\environment.ps1"
   REM Use the real generated saver: a fake marker alone must not hide a missing helper.
   copy /Y "%SCOOP%\.portable\environment.ps1" "%~1\.portable\environment.ps1" >NUL || exit 1
+  REM Even stubbed imports must have an importer that the wrapper can safely guard.
+  if not exist "%lib%\..\libexec" md "%lib%\..\libexec" || exit 1
+  copy /Y "%SCOOP%\apps\scoop\current\libexec\scoop-import.ps1" "%lib%\..\libexec\scoop-import.ps1" >NUL || exit 1
   endlocal
 goto :EOF
 
