@@ -2,15 +2,15 @@
 :: config parameters for initial installation
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
-::set PROXY=http://myproxy.local:8080
-set PROXY=
+:: Use host:port, e.g. myproxy.local:8080; the installer adds http://.
+set SCOOP_PROXY=
 
 :: if set to true the Windows credentials of the logged-in user are used for proxy authentication
-set PROXY_USE_WINDOWS_CREDENTIALS=false
+set SCOOP_PROXY_USE_WINDOWS_CREDENTIALS=false
 
-:: if PROXY_USE_WINDOWS_CREDENTIALS is set to false, then use these credentials for proxy authentication
-set PROXY_USER=
-set PROXY_PASSWORD=
+:: if SCOOP_PROXY_USE_WINDOWS_CREDENTIALS is set to false, then use these credentials for proxy authentication
+set SCOOP_PROXY_USER=
+set SCOOP_PROXY_PASSWORD=
 
 :: additional scoop buckets to register by default
 set SCOOP_BUCKETS=extras java sysinternals

@@ -175,7 +175,7 @@ goto :eof
   :: if set to true the Windows credentials of the logged-in user are used for proxy authentication
   set SCOOP_PROXY_USE_WINDOWS_CREDENTIALS=false
 
-  :: if PROXY_USE_WINDOWS_CREDENTIALS is set to false, then use these credentials for proxy authentication
+  :: if SCOOP_PROXY_USE_WINDOWS_CREDENTIALS is set to false, then use these credentials for proxy authentication
   set SCOOP_PROXY_USER=
   set SCOOP_PROXY_PASSWORD=
 
