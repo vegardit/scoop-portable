@@ -531,7 +531,9 @@ goto :eof
     call :get_2nd_positional_arg app_name %*
     call "%SCOOP%\shims\scoop.cmd" %*
     set rc=!errorlevel!
-    call :cleanup_active_versions
+    REM Scoop may already have removed the app when portable cleanup fails.
+    REM Report that incomplete cleanup without hiding an earlier Scoop failure.
+    call :cleanup_active_versions || if !rc! == 0 set rc=1
     exit /B !rc!
   )
 
@@ -686,7 +688,8 @@ exit /B %save_rc%
   :: Keeping this PowerShell out of a -command string also avoids CMD's 8191-character limit.
   set "scoop_portable_app=%app_name%"
   set "scoop_portable_save_mode=%save_mode%"
-  powershell -noprofile -command ". \"$env:SCOOP\.portable\environment.ps1\"; Save-ScoopPortableEnvironment $env:scoop_portable_app $env:scoop_portable_save_mode" || goto :save_active_version___FAILED
+  :: Match cleanup_active_versions: use a process policy override for copied installations.
+  powershell -noprofile -ex unrestricted -command ". \"$env:SCOOP\.portable\environment.ps1\"; Save-ScoopPortableEnvironment $env:scoop_portable_app $env:scoop_portable_save_mode" || goto :save_active_version___FAILED
 exit /B 0
 
 :save_active_version___FAILED
@@ -697,34 +700,13 @@ exit /B 1
 
 
 :cleanup_active_versions
-  setlocal EnableDelayedExpansion
-
-  :: Hook snapshots have one extension, so the remaining filename is the complete app name.
-  for /F %%f in ('dir /B "%SCOOP%\.portable\active_versions\*.env_hooks" 2^>NUL') do (
-    if not exist "%SCOOP%\apps\%%~nf\current" del /F "%SCOOP%\.portable\active_versions\%%~f" >NUL
+  :: A copied installation skips the installer's per-user policy setup.
+  :: Like Scoop's shim, allow the helper in this process without changing the user's policy.
+  powershell -noprofile -ex unrestricted -command ". \"$env:SCOOP\.portable\environment.ps1\"; Remove-ScoopPortableInactiveVersions" || (
+    >&2 call :log_WARN Could not remove portable settings. Correct the reported error; cleanup is retried on the next uninstall.
+    exit /B 1
   )
-
-  for /F %%f in ('dir /B "%SCOOP%\.portable\active_versions\*.json" 2^>NUL') do (
-    call :substring_before "%%~f" . app_name
-    if not exist "%SCOOP%\apps\!app_name!\current" (
-      del /F "%SCOOP%\.portable\active_versions\%%~f" >NUL
-    )
-  )
-
-  for /F %%f in ('dir /B "%SCOOP%\.portable\active_versions\*.env_add_path" 2^>NUL') do (
-    call :substring_before "%%~f" . app_name
-    if not exist "%SCOOP%\apps\!app_name!\current" (
-      del /F "%SCOOP%\.portable\active_versions\%%~f" >NUL
-    )
-  )
-
-  for /F %%f in ('dir /B "%SCOOP%\.portable\active_versions\*.env_set.cmd" 2^>NUL') do (
-    call :substring_before "%%~f" . app_name
-    if not exist "%SCOOP%\apps\!app_name!\current" (
-      del /F "%SCOOP%\.portable\active_versions\%%~f" >NUL
-    )
-  )
-goto :eof
+exit /B 0
 
 
 
@@ -736,7 +718,7 @@ goto :eof
     $shortcutFunctions = 'function create_startmenu_shortcuts($manifest, $dir, $global, $arch) {', 'function startmenu_shortcut([System.IO.FileInfo] $target, $shortcutName, $arguments, [System.IO.FileInfo]$icon, $global) {'; ^
     $envOverride = 'function Set-EnvVar { param([string]$Name, [string]$Value, [switch]$Global) }'; ^
     $hookOverride = '. \"$env:SCOOP\.portable\environment.ps1\"'; ^
-    $patchMarker = '# scoop-portable-patches: 5'; ^
+    $patchMarker = '# scoop-portable-patches: 6'; ^
     function portableText($file, $text) { ^
       switch -CaseSensitive ($file) { ^
         'lib/core.ps1' { return $text.replace('$env:XDG_CONFIG_HOME', '\"$env:SCOOP\.portable\"') } ^
@@ -863,7 +845,7 @@ goto :eof
     call :patch_scoop
     exit /B
   )
-  findstr /L /C:"# scoop-portable-patches: 5" "%SCOOP%\apps\scoop\current\lib\system.ps1" >NUL 2>NUL || call :patch_scoop
+  findstr /L /C:"# scoop-portable-patches: 6" "%SCOOP%\apps\scoop\current\lib\system.ps1" >NUL 2>NUL || call :patch_scoop
 goto :eof
 
 
@@ -1445,6 +1427,7 @@ goto :eof
 # Captures app-owned hook settings and reconciles the environment of the selected
 # version. Hook scripts run only in Scoop's installation process; loading a CMD
 # session replays saved data and never writes persistent environment variables.
+# Refresh and uninstall share ownership rules for the saved app state.
 # Explicit updates also use this helper to restore the user's original registry
 # PATH if an app installer changes it outside Scoop's patched environment helpers.
 
@@ -1521,6 +1504,47 @@ function Restore-ScoopPortableUserPath([string]$SnapshotFile, [string]$RegistryS
     # The wrapper owns notification and file cleanup. Keeping them outside registry
     # restoration leaves this function usable for isolated tests and manual recovery.
     return $true
+}
+
+function Get-ScoopPortableStateOwner([IO.FileInfo]$File) {
+    # The final numeric component of a PATH filename is an index, even when an
+    # app such as foo.1 exists. Snapshots have only their fixed extension.
+    if ($File.Name -match '^(.+)\.(?:json|env_hooks)$' -or
+        $File.Name -match '^(.+)\.[0-9]+\.env_add_path$') {
+        return $Matches[1]
+    }
+    if ($File.Name.EndsWith('.env_set.cmd', [StringComparison]::OrdinalIgnoreCase)) {
+        # Both app and variable names can contain dots. Read the generated SET
+        # name as data, never execute the script or guess from another app's prefix.
+        # Older versions wrote unquoted assignments; their files remain loadable.
+        $firstLine = Get-Content -LiteralPath $File.FullName -TotalCount 1 -ErrorAction Stop
+        if ($firstLine -match '^@set "?([^"=]+)=') {
+            $suffix = ".$($Matches[1]).env_set.cmd"
+            if ($File.Name.Length -gt $suffix.Length -and
+                $File.Name.EndsWith($suffix, [StringComparison]::OrdinalIgnoreCase)) {
+                return $File.Name.Substring(0, $File.Name.Length - $suffix.Length)
+            }
+        }
+    }
+    throw "Cannot identify the owner of portable settings file: $($File.FullName)"
+}
+
+function Remove-ScoopPortableInactiveVersions {
+    $ErrorActionPreference = 'Stop'
+    $envDir = Join-Path $env:SCOOP '.portable\active_versions'
+    if (-not (Test-Path -LiteralPath $envDir)) { return }
+    # Resolve ownership before deleting anything. A damaged script cannot safely
+    # be assigned to an app, and an earlier cleanup may have lost its manifest.
+    $inactiveFiles = @(foreach ($file in Get-ChildItem -LiteralPath $envDir -File) {
+        if ($file.Name -notmatch '\.(json|env_hooks|env_add_path|env_set\.cmd)$') { continue }
+        $appName = Get-ScoopPortableStateOwner $file
+        if (-not (Test-Path -LiteralPath (Join-Path $env:SCOOP "apps\$appName\current"))) { $file }
+    })
+    # Keep version records until all derived state is removed. A failed deletion
+    # leaves the records available for diagnosis and another cleanup attempt.
+    foreach ($file in ($inactiveFiles | Sort-Object { $_.Extension -eq '.json' })) {
+        Remove-Item -LiteralPath $file.FullName -Force
+    }
 }
 
 function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
@@ -1650,24 +1674,19 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
         $index++
         $envFiles["$AppName.$index.env_add_path"] = $path
     }
-    $appPrefix = "$AppName."
-    # foo's refresh must not prune files owned by a separately installed foo.extra.
-    $otherPrefixes = @($savedFiles | Where-Object {
-        $_.Extension -eq '.json' -and $_.BaseName.StartsWith($appPrefix, [StringComparison]::OrdinalIgnoreCase)
-    } | ForEach-Object { $_.BaseName + '.' })
-    $ownedFiles = @($savedFiles | Where-Object {
-        $fileName = $_.Name
-        $fileName.StartsWith($appPrefix, [StringComparison]::OrdinalIgnoreCase) -and
-        $fileName -match '\.(env_set\.cmd|env_add_path)$' -and
-        -not ($otherPrefixes | Where-Object { $fileName.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) })
-    })
     # Writes are not transactional. Fail before pruning if a write fails; named reset
     # retries generation from the manifest and captured hook record without rerunning hooks.
     foreach ($entry in $envFiles.GetEnumerator()) {
         Set-Content -LiteralPath (Join-Path $envDir $entry.Key) -Value $entry.Value
     }
-    foreach ($file in $ownedFiles) {
-        if (-not $envFiles.ContainsKey($file.Name)) { Remove-Item -LiteralPath $file.FullName -Force }
+    # Do not read files being regenerated: reset must repair even truncated outputs.
+    # A prefix only selects candidates; foo's refresh must not prune foo.extra's files.
+    foreach ($file in $savedFiles) {
+        if (-not $file.Name.StartsWith("$AppName.", [StringComparison]::OrdinalIgnoreCase) -or
+            $file.Name -notmatch '\.(env_set\.cmd|env_add_path)$' -or $envFiles.ContainsKey($file.Name)) { continue }
+        if ((Get-ScoopPortableStateOwner $file) -eq $AppName) {
+            Remove-Item -LiteralPath $file.FullName -Force
+        }
     }
     if ($envFiles.ContainsKey("$AppName.JAVA_HOME.env_set.cmd")) {
         foreach ($jdk in $otherJdks) {

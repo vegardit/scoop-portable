@@ -1,4 +1,4 @@
-# CI regression fixture for portable hook settings, shared search paths and dotted app names.
+# CI regression fixture for portable hook settings, shared search paths and saved-state ownership.
 # Uses Scoop's real helper bodies with a registry writer that always fails, so
 # a missing patch cannot modify the user's environment during this test.
 param([Parameter(Mandatory = $true)][string]$PortableRoot)
@@ -20,9 +20,41 @@ function Read-ScoopFunction([string]$Library, [string]$Name) {
     $definition.Extent.Text
 }
 
-function Invoke-Wrapper([string]$Arguments) {
-    & $env:ComSpec /D /S /C ('""{0}\.portable\scoop.cmd" {1}"' -f $fixtureRoot, $Arguments) | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Portable wrapper failed: $Arguments" }
+function Invoke-Wrapper([string]$Arguments, [int]$ExpectedExitCode = 0) {
+    # Capture stderr in CMD so expected cleanup errors do not become terminating
+    # NativeCommandError records in the PowerShell test process.
+    # CALL preserves the wrapper's exit code; direct cmd /c invocation can return
+    # zero when the batch file finishes with goto :eof.
+    & $env:ComSpec /D /S /C ('call "{0}\.portable\scoop.cmd" {1} >"{0}\wrapper.log" 2>&1' -f $fixtureRoot, $Arguments)
+    if ($LASTEXITCODE -ne $ExpectedExitCode) {
+        throw "Unexpected wrapper exit code ${LASTEXITCODE}: $Arguments`n$(Get-Content -LiteralPath "$fixtureRoot\wrapper.log" -Raw)"
+    }
+}
+
+function Write-SavedState([string]$Name, [switch]$WithoutSnapshots) {
+    $files = @{
+        "$Name.1.env_add_path" = 'bin'
+        "$Name.PORTABLE_TEST_OWNER.env_set.cmd" = '@set "PORTABLE_TEST_OWNER=' + $Name + '"'
+        "$Name.PORTABLE_TEST_LEGACY.env_set.cmd" = '@set PORTABLE_TEST_LEGACY=' + $Name
+        # A dot can belong to the variable name even when an app has the longer prefix.
+        "$Name.extra.PORTABLE_TEST_DOTTED.env_set.cmd" = '@set "extra.PORTABLE_TEST_DOTTED=' + $Name + '"'
+    }
+    if (-not $WithoutSnapshots) {
+        $files["$Name.json"] = '{"version":"1"}'
+        $files["$Name.env_hooks"] = '{}'
+    }
+    foreach ($file in $files.GetEnumerator()) {
+        Set-Content -LiteralPath "$versions\$($file.Key)" -Value $file.Value
+    }
+    return $files.Keys
+}
+
+function Read-SavedState {
+    $state = @{}
+    foreach ($file in Get-ChildItem -LiteralPath $versions -File) {
+        $state[$file.Name] = [Convert]::ToBase64String([IO.File]::ReadAllBytes($file.FullName))
+    }
+    return $state
 }
 
 function Read-Session([switch]$EmptySearchPaths) {
@@ -119,6 +151,35 @@ function get_config($Name) { $false }
     # Commands can source install.ps1 again in one process. The hook wrapper must
     # still delegate to upstream rather than capturing itself and recursing.
     . "$lib\install.ps1"
+
+    $policyFiles = @(Write-SavedState 'restricted.app')
+    $policyAppDir = "$fixtureRoot\apps\restricted.save\current"
+    New-Item -ItemType Directory -Path $policyAppDir | Out-Null
+    '{"version":"1","env_set":{"PORTABLE_TEST_POLICY":"refreshed"},"env_add_path":"new-bin"}' |
+        Set-Content -LiteralPath "$policyAppDir\manifest.json"
+    # Stale outputs prove that reset regenerates settings instead of retaining
+    # files written by an earlier process with a permissive execution policy.
+    '@set "PORTABLE_TEST_POLICY=stale"' | Set-Content -LiteralPath "$versions\restricted.save.PORTABLE_TEST_POLICY.env_set.cmd"
+    'old-bin' | Set-Content -LiteralPath "$versions\restricted.save.1.env_add_path"
+    $previousPolicy = $env:PSExecutionPolicyPreference
+    try {
+        # The runner's Unrestricted policy is inherited by child processes. Model
+        # a copied installation under a restricted account without changing any
+        # user or machine policy, and verify that the child really is restricted.
+        $env:PSExecutionPolicyPreference = 'Restricted'
+        Assert-Value (& powershell -noprofile -command 'Get-ExecutionPolicy') 'Restricted' 'child execution policy'
+        Invoke-Wrapper 'reset restricted.save'
+        Invoke-Wrapper 'uninstall restricted.app'
+    } finally {
+        $env:PSExecutionPolicyPreference = $previousPolicy
+    }
+    foreach ($file in $policyFiles) {
+        Assert-Value (Test-Path -LiteralPath "$versions\$file") $false 'cleanup under a restricted account policy'
+    }
+    Assert-Value (Get-Content -LiteralPath "$versions\restricted.save.PORTABLE_TEST_POLICY.env_set.cmd" -Raw).Trim() `
+        '@set "PORTABLE_TEST_POLICY=refreshed"' 'save settings under a restricted account policy'
+    Assert-Value (Get-Content -LiteralPath "$versions\restricted.save.1.env_add_path" -Raw).Trim() `
+        'new-bin' 'save PATH under a restricted account policy'
 
     $manifest = @'
 {
@@ -333,7 +394,95 @@ exit /B %errorlevel%
         $failed = $true
     }
     if (-not $failed) { throw 'A hook-state write failure was ignored' }
-    Write-Host 'Portable hook and dotted-name regressions passed.'
+    # Reset must replace a damaged generated file without first needing its old contents.
+    New-Item -ItemType Directory -Path "$fixtureRoot\apps\repair\current" | Out-Null
+    '{"version":"1","env_set":{"PORTABLE_TEST_REPAIRED":"restored"}}' |
+        Set-Content -LiteralPath "$fixtureRoot\apps\repair\current\manifest.json"
+    Set-Content -LiteralPath "$versions\repair.PORTABLE_TEST_REPAIRED.env_set.cmd" -Value '' -NoNewline
+    Invoke-Wrapper 'reset repair'
+    Assert-Value (Get-Content -LiteralPath "$versions\repair.PORTABLE_TEST_REPAIRED.env_set.cmd" -Raw).Trim() `
+        '@set "PORTABLE_TEST_REPAIRED=restored"' 'reset repairs an empty generated file'
+    Write-Host 'Empty-script repair regression passed.'
+
+    foreach ($pair in @(@('foo', 'foo.extra'), @('foo.extra', 'foo'),
+            @('foo.extra', 'foo.extra.more'), @('foo.1', 'foo'), @('foo', 'foo.1'),
+            @('orphan.gone', 'orphan.live'))) {
+        $removed, $kept = $pair
+        New-Item -ItemType Directory -Path "$fixtureRoot\apps\$kept\current" -Force | Out-Null
+        # The stub Scoop leaves directories alone. Only the survivor has a current
+        # directory, reproducing the filesystem state after an actual uninstall.
+        $withoutSnapshots = $removed -eq 'orphan.gone'
+        $removedFiles = @(Write-SavedState $removed -WithoutSnapshots:$withoutSnapshots)
+        $keptFiles = @(Write-SavedState $kept -WithoutSnapshots:$withoutSnapshots)
+        $expected = Read-SavedState
+        foreach ($file in $removedFiles) { $expected.Remove($file) }
+        Invoke-Wrapper "uninstall $removed"
+        foreach ($file in $removedFiles) {
+            Assert-Value (Test-Path -LiteralPath "$versions\$file") $false "remove $file"
+        }
+        $actual = Read-SavedState
+        Assert-Value $actual.Count $expected.Count 'uninstall removes only the absent app state'
+        foreach ($file in $expected.Keys) {
+            Assert-Value $actual[$file] $expected[$file] "preserve $file after uninstalling $removed"
+        }
+        # These fixture directories are empty; the non-recursive delete cannot remove app data.
+        [IO.Directory]::Delete("$fixtureRoot\apps\$kept\current")
+        Invoke-Wrapper "uninstall $kept"
+        foreach ($file in $keptFiles) {
+            Assert-Value (Test-Path -LiteralPath "$versions\$file") $false "remove remaining $file"
+        }
+    }
+
+    # Saving uses the same ownership rule. A numeric app suffix must not protect
+    # an obsolete PATH index, nor may a dotted variable be pruned by a neighboring app.
+    foreach ($name in 'refresh', 'refresh.extra', 'refresh.1') {
+        New-Item -ItemType Directory -Path "$fixtureRoot\apps\$name\current" -Force | Out-Null
+        '{"version":"1"}' | Set-Content -LiteralPath "$fixtureRoot\apps\$name\current\manifest.json"
+    }
+    '{"version":"1","env_add_path":"old-bin","env_set":{"extra.PORTABLE_TEST_REMOVED":"old"}}' |
+        Set-Content -LiteralPath "$fixtureRoot\apps\refresh\current\manifest.json"
+    Invoke-Wrapper 'reset refresh refresh.extra refresh.1'
+    Assert-Value (Test-Path -LiteralPath "$versions\refresh.extra.PORTABLE_TEST_REMOVED.env_set.cmd") $true `
+        'refreshing a neighboring app preserves a dotted variable'
+    '{"version":"2"}' | Set-Content -LiteralPath "$fixtureRoot\apps\refresh\current\manifest.json"
+    Invoke-Wrapper 'reset refresh'
+    Assert-Value (Test-Path -LiteralPath "$versions\refresh.1.env_add_path") $false 'prune PATH despite a numeric app suffix'
+    Assert-Value (Test-Path -LiteralPath "$versions\refresh.extra.PORTABLE_TEST_REMOVED.env_set.cmd") $false 'prune a dotted variable'
+    foreach ($name in 'refresh.extra', 'refresh.1') {
+        Assert-Value (Test-Path -LiteralPath "$versions\$name.json") $true 'preserve the neighboring version record'
+    }
+
+    $blockedFiles = @(Write-SavedState 'blocked.app')
+    $blockedFile = "$versions\blocked.app.PORTABLE_TEST_OWNER.env_set.cmd"
+    # Allow the ownership reader, but deny deletion until the handle is disposed.
+    # Read-only attributes alone would not exercise Remove-Item -Force failures.
+    $lock = [IO.File]::Open($blockedFile, 'Open', 'Read', 'Read')
+    try {
+        Invoke-Wrapper 'uninstall blocked.app' 1
+        Assert-Value (Test-Path -LiteralPath "$versions\blocked.app.json") $true 'retain the manifest after failed cleanup'
+        Assert-Value (Test-Path -LiteralPath $blockedFile) $true 'retain the locked file'
+        '@exit /B 7' | Set-Content -LiteralPath "$fixtureRoot\shims\scoop.cmd"
+        Invoke-Wrapper 'uninstall blocked.app' 7
+    } finally {
+        $lock.Dispose()
+        '@exit /B 0' | Set-Content -LiteralPath "$fixtureRoot\shims\scoop.cmd"
+    }
+    Invoke-Wrapper 'uninstall blocked.app'
+    foreach ($file in $blockedFiles) {
+        Assert-Value (Test-Path -LiteralPath "$versions\$file") $false 'retry cleanup after releasing the lock'
+    }
+
+    $unknownFile = "$versions\unknown.PORTABLE_TEST.env_set.cmd"
+    '@rem Cannot identify an owner' | Set-Content -LiteralPath $unknownFile
+    Invoke-Wrapper 'uninstall unknown' 1
+    Assert-Value (Test-Path -LiteralPath $unknownFile) $true 'retain an unidentifiable file'
+    if ((Get-Content -LiteralPath "$fixtureRoot\wrapper.log" -Raw) -notlike '*unknown.PORTABLE_TEST.env_set.cmd*') {
+        throw 'Cleanup did not identify the file that needs repair'
+    }
+    '@set "PORTABLE_TEST=recovered"' | Set-Content -LiteralPath $unknownFile
+    Invoke-Wrapper 'uninstall unknown'
+    Assert-Value (Test-Path -LiteralPath $unknownFile) $false 'retry cleanup after repairing an orphan script'
+    Write-Host 'Portable hook and saved-state ownership regressions passed.'
 } catch {
     Write-Error $_
     exit 1
