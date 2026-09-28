@@ -958,6 +958,8 @@ goto :eof
   :: Drop older entries first and recheck each reference's object ID before dropping it, since
   :: another Git operation may have changed the stash numbering while we inspected its contents.
   :: Cleanup failures only warn: keeping a stash is harmless, guessing could delete user work.
+  :: Get-Command can return several git.exe paths. Use the first, as normal command lookup does,
+  :: so both native invocation and Process.StartInfo receive one executable path.
   :: The script is one cmd line built with ^; literal ^, | and & need ^^, ^| and ^&.
   setlocal
   call :define_scoop_patches
@@ -965,7 +967,7 @@ goto :eof
     $ErrorActionPreference = 'Stop'; ^
     $dir = $env:SCOOP + '\apps\scoop\current'; ^
     if (-not (Test-Path ($dir + '\.git'))) { exit 0 }; ^
-    $git = Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue; ^
+    $git = Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue ^| Select-Object -First 1; ^
     if (-not $git) { exit 0 }; ^
     $git = $git.Source; ^
     $utf8 = New-Object System.Text.UTF8Encoding($false, $true); ^

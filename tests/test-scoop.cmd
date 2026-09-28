@@ -644,7 +644,11 @@ goto :EOF
   REM with an identity for the commits of the fixture, as CI may have none configured
   set "fixture_git=git -C "%repo%" -c user.name=scoop-portable-test -c user.email=test@example.invalid"
   REM fail on setup errors, otherwise a broken fixture could satisfy some assertions
-  md "%stub_root%\shims" "%stub_root%\.portable\scoop" "%repo%\lib" || exit 1
+  md "%stub_root%\shims" "%stub_root%\.portable\scoop" "%stub_root%\other-git" "%repo%\lib" || exit 1
+  REM Force multiple git.exe candidates even on hosts with only one Git installation.
+  REM Keep real Git first; this renamed executable must never be selected or run.
+  copy /Y "%SystemRoot%\System32\where.exe" "%stub_root%\other-git\git.exe" >NUL || exit 1
+  set "PATH=%PATH%;%stub_root%\other-git"
   copy /Y "%SCOOP%\.portable\scoop.cmd" "%stub_root%\.portable\scoop.cmd" >NUL || exit 1
   REM the stub scoop takes each call for a successful update of scoop itself
   >"%stub_root%\shims\scoop.cmd" echo @^>"%%~dp0..\.portable\scoop\config.json" echo {"last_update": "2099-01-01T00:00:00"}
@@ -726,7 +730,8 @@ goto :EOF
   call :assert_log_contains "%stub_root%\all-stashes.log" "WIP at 2026-02-01"
   call :assert_log_contains "%stub_root%\all-stashes.log" "WIP at 2026-02-02"
   findstr /V /C:"WIP at 2026-02-" "%stub_root%\all-stashes.log" > "%stub_root%\stashes-before.log" || exit 1
-  call "%SCOOP%\.portable\scoop.cmd" update >NUL 2>&1
+  REM Cleanup failures only warn, so keep their diagnostics visible if the stash comparison fails.
+  call "%SCOOP%\.portable\scoop.cmd" update
   call :assert_exit_code 0 "scoop update"
   %fixture_git% stash list --format="%%H %%gs" > "%stub_root%\stashes-after.log" || exit 1
   call :assert_same_file "%stub_root%\stashes-before.log" "%stub_root%\stashes-after.log" "scoop update"
@@ -1072,6 +1077,7 @@ goto :EOF
   :: args: <EXPECTED_FILE> <ACTUAL_FILE> <COMMAND>
   fc /B "%~1" "%~2" >NUL 2>&1 || (
     echo "ERROR: [%~2] does not match [%~1] after [%~3]!"
+    fc /N "%~1" "%~2"
     exit 1
   )
 goto :EOF
