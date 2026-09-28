@@ -267,7 +267,7 @@ goto :eof
        call "%SCOOP%\.portable\scoop.cmd" config proxy currentuser@%SCOOP_PROXY% || exit /B 1
     ) else (
       if defined SCOOP_PROXY_USER (
-        call "%SCOOP%\.portable\scoop.cmd" config proxy %SCOOP_PROXY_USER%:%SCOOP_PROXY_USER%@%SCOOP_PROXY% || exit /B 1
+        call "%SCOOP%\.portable\scoop.cmd" config proxy %SCOOP_PROXY_USER%:%SCOOP_PROXY_PASSWORD%@%SCOOP_PROXY% || exit /B 1
       ) else (
         call "%SCOOP%\.portable\scoop.cmd" config proxy %SCOOP_PROXY% || exit /B 1
       )
