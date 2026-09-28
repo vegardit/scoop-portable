@@ -1,6 +1,6 @@
 @echo off
 :: CI test: loads scoop-portable and checks the behavior of its scoop wrapper
-:: (app installs, hook capture, environment refresh and recovery, active version tracking, java switching,
+:: (app installs, hook capture, environment refresh and recovery, active version tracking, bulk resets, java switching,
 :: exit codes, patching of scoop,
 :: argument forwarding, safe stash cleanup, and separate updates of scoop itself)
 setlocal
@@ -93,6 +93,7 @@ pushd %TEMP%
   :: and does not switch JAVA_HOME to a JDK that was not updated. Also asserts that reset,
   :: update and uninstall are handled in any case
   call :assert_update_refreshes_active_versions
+  call :assert_bulk_reset_saves_versions
 
   :: assert a failed patch fails the command and is retried, and a patch that no longer matches warns
   call :assert_patch_failures_are_reported
@@ -119,7 +120,7 @@ pushd %TEMP%
   :: exercise real Scoop helpers without allowing the fixture to write the registry
   call eval powershell -noprofile -ex unrestricted -file "%~dp0test-hook-environment.ps1" "%SCOOP%"
   :: each caller must report saving failures without abandoning the remaining app records
-  for %%c in (update install reset import) do call :assert_env_save_failures_are_reported %%c
+  for %%c in (update install reset reset-all import) do call :assert_env_save_failures_are_reported %%c
 popd
 
 goto :EOF
@@ -272,6 +273,108 @@ goto :EOF
   call :assert_same_file "%stub_root%\apps\jdk8\current\manifest.json" "%versions%\jdk8.json" "scoop update %~1"
   call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
   call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+goto :EOF
+
+
+:assert_bulk_reset_saves_versions
+  echo ::group::saved versions and environment after bulk reset (stub scoop)
+  setlocal
+  REM A fresh fixture keeps these resets away from installed apps and real Scoop commands.
+  set "stub_root=%TEMP%\scoop-portable-reset-test-%RANDOM%%RANDOM%"
+  set "versions=%stub_root%\.portable\active_versions"
+  md "%stub_root%\shims" "%stub_root%\.portable" "%stub_root%\cwd" || exit 1
+  for %%a in (foo.10 jdk8 jdk11) do md "%stub_root%\apps\%%a\current" || exit 1
+  call :create_patched_stub_lib "%stub_root%"
+  copy /Y "%SCOOP%\.portable\scoop.cmd" "%stub_root%\.portable\scoop.cmd" >NUL || exit 1
+  >"%stub_root%\shims\scoop.cmd" echo @exit /B 0
+  >"%stub_root%\apps\foo.10\current\manifest.json" echo {"version":"initial"}
+  >"%stub_root%\apps\jdk8\current\manifest.json" echo {"version":"8","env_set":{"JAVA_HOME":"$dir"}}
+  >"%stub_root%\apps\jdk11\current\manifest.json" echo {"version":"11","env_set":{"JAVA_HOME":"$dir"}}
+  set "SCOOP=%stub_root%"
+  call "%SCOOP%\.portable\scoop.cmd" reset foo.10 jdk8 jdk11 >NUL 2>&1
+  call :assert_exit_code 0 "initial reset fixture"
+  call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+
+  REM A wildcard expanded by CMD would select this inactive JDK instead of saving all apps.
+  >"%stub_root%\cwd\jdk8" type NUL
+  pushd "%stub_root%\cwd"
+  set "reset_sequence=0"
+  REM Call separately: putting wildcard arguments in a FOR list would expand them in the test.
+  call :assert_bulk_reset_form reset --all
+  call :assert_bulk_reset_form reset -a
+  call :assert_bulk_reset_form reset *
+  call :assert_bulk_reset_form reset "*"
+  call :assert_bulk_reset_form RESET --ALL
+  call :assert_bulk_reset_form RESET -A
+  call :assert_bulk_reset_form reset -aa
+  call :assert_bulk_reset_form reset jdk8 --all
+  call :assert_bulk_reset_form reset * jdk8
+  call :assert_bulk_reset_form reset -- *
+  call :assert_bulk_reset_form reset --all -- jdk8
+
+  REM Matching snapshots do not imply complete outputs: reset must repair these too.
+  >"%versions%\foo.10.PORTABLE_TEST_RESET.env_set.cmd" type NUL
+  del "%versions%\foo.10.1.env_add_path" || exit 1
+  set "PORTABLE_TEST_RESET=stale"
+  call "%SCOOP%\.portable\scoop.cmd" reset --all >NUL 2>&1
+  call :assert_exit_code 0 "bulk reset repairs settings with unchanged snapshots"
+  if not "%PORTABLE_TEST_RESET%" == "reset-%reset_sequence%" (
+    echo ERROR: Bulk reset did not rebuild and load the unchanged app's settings!
+    exit 1
+  )
+  call :assert_log_contains "%versions%\foo.10.1.env_add_path" "bin"
+
+  REM After -- these are literal app names, so unrelated snapshots must stay untouched.
+  copy /Y "%versions%\foo.10.json" "%stub_root%\before.json" >NUL || exit 1
+  >"%SCOOP%\apps\foo.10\current\manifest.json" echo {"version":"must-not-be-saved"}
+  for %%a in (-a --all) do (
+    call "%SCOOP%\.portable\scoop.cmd" reset -- %%a >NUL 2>&1
+    call :assert_exit_code 0 "literal app after the option terminator"
+    call :assert_same_file "%stub_root%\before.json" "%versions%\foo.10.json" "literal %%a"
+  )
+  REM Scoop rejects unknown flags before doing any resets, even if a bulk target was present.
+  >"%stub_root%\shims\scoop.cmd" echo @exit /B 1
+  call "%SCOOP%\.portable\scoop.cmd" reset --all --invalid >NUL 2>&1
+  call :assert_exit_code 1 "invalid option after a bulk option"
+  call :assert_same_file "%stub_root%\before.json" "%versions%\foo.10.json" "invalid bulk reset"
+  call "%SCOOP%\.portable\scoop.cmd" reset -qa * >NUL 2>&1
+  call :assert_exit_code 1 "invalid combined reset option"
+  call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+  >"%stub_root%\shims\scoop.cmd" echo @exit /B 0
+
+  REM Named resets still select the JDK, including a bucket prefix and version after --.
+  call "%SCOOP%\.portable\scoop.cmd" reset -- java/jdk8@8 >NUL 2>&1
+  call :assert_exit_code 0 "named reset after the option terminator"
+  call :assert_file_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+  popd
+  endlocal
+  echo ::endgroup::
+goto :EOF
+
+
+:assert_bulk_reset_form
+  :: args: <COMMAND> <ARG,...>; uses the fixture created by assert_bulk_reset_saves_versions.
+  set /a reset_sequence+=1 >NUL
+  REM The stub leaves manifests alone; these changes stand for the versions selected by Scoop.
+  >"%SCOOP%\apps\foo.10\current\manifest.json" echo {"version":"%reset_sequence%","env_set":{"PORTABLE_TEST_RESET":"reset-%reset_sequence%"},"env_add_path":"bin"}
+  >"%SCOOP%\apps\jdk8\current\manifest.json" echo {"version":"8-%reset_sequence%","env_set":{"JAVA_HOME":"$dir"}}
+  set "PORTABLE_TEST_RESET=stale"
+  call "%SCOOP%\.portable\scoop.cmd" %* >NUL 2>&1
+  call :assert_exit_code 0 "%*"
+  call :assert_same_file "%SCOOP%\apps\foo.10\current\manifest.json" "%versions%\foo.10.json" "%*"
+  call :assert_same_file "%SCOOP%\apps\jdk8\current\manifest.json" "%versions%\jdk8.json" "%*"
+  call :assert_file_exists "%versions%\jdk11.JAVA_HOME.env_set.cmd"
+  call :assert_file_not_exists "%versions%\jdk8.JAVA_HOME.env_set.cmd"
+  if not "%JAVA_HOME%" == "%SCOOP%\apps\jdk11\current" (
+    echo ERROR: Bulk reset changed the selected JDK!
+    exit 1
+  )
+  if not "%PORTABLE_TEST_RESET%" == "reset-%reset_sequence%" (
+    echo ERROR: Bulk reset did not refresh the calling shell's environment!
+    exit 1
+  )
 goto :EOF
 
 
@@ -978,7 +1081,7 @@ goto :EOF
 
 
 :assert_env_save_failures_are_reported
-  :: args: <COMMAND>; covers named saves, changed-app scans, and new-app scans
+  :: args: <COMMAND>; reset-all selects a bulk reset. Covers named saves and app scans.
   echo ::group::environment saving failure after %~1 (stub scoop)
   setlocal
   REM a new folder per run that is left behind, see assert_patch_failures_are_reported
@@ -1007,6 +1110,10 @@ goto :EOF
     set "command_args=reset a-broken z-later"
     >"%versions%\a-broken.json" echo {"version":"1"}
   )
+  if "%~1" == "reset-all" (
+    set "command_args=reset --all"
+    >"%versions%\a-broken.json" echo {"version":"1"}
+  )
   REM These two commands must find a-broken through the new-app scan, not a named save.
   if "%~1" == "install" set "command_args=install unrelated"
   if "%~1" == "import" set "command_args=import fixture.json"
@@ -1019,12 +1126,20 @@ goto :EOF
   call :assert_log_contains "%stub_root%\failure.log" "scoop reset a-broken"
 
   >"%stub_root%\shims\scoop.cmd" echo @exit /B 7
-  call "%SCOOP%\.portable\scoop.cmd" reset a-broken z-later >NUL 2>&1
+  if "%~1" == "reset-all" (
+    call "%SCOOP%\.portable\scoop.cmd" reset --all >NUL 2>&1
+  ) else (
+    call "%SCOOP%\.portable\scoop.cmd" reset a-broken z-later >NUL 2>&1
+  )
   call :assert_exit_code 7 "preserve the original Scoop failure"
   >"%stub_root%\shims\scoop.cmd" echo @exit /B 0
   attrib -R "%versions%\a-broken.PORTABLE_TEST_BROKEN.env_set.cmd"
-  REM The snapshots now match: a named reset must still retry the failed environment generation.
-  call "%SCOOP%\.portable\scoop.cmd" reset a-broken >NUL 2>&1
+  REM The snapshots now match: both named and bulk resets must retry failed environment generation.
+  if "%~1" == "reset-all" (
+    call "%SCOOP%\.portable\scoop.cmd" reset --all >NUL 2>&1
+  ) else (
+    call "%SCOOP%\.portable\scoop.cmd" reset a-broken >NUL 2>&1
+  )
   call :assert_exit_code 0 "retry environment generation"
   call :assert_log_contains "%versions%\a-broken.PORTABLE_TEST_BROKEN.env_set.cmd" "PORTABLE_TEST_BROKEN=new"
   call :assert_file_not_exists "%versions%\a-broken.2.env_add_path"

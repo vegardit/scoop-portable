@@ -544,10 +544,19 @@ goto :eof
     call "%SCOOP%\shims\scoop.cmd" %*
     set rc=!errorlevel!
 
-    REM /%* makes the first arg (the command) a flag so it is not treated as an app name
-    call :get_positional_args apps /%*
-    for %%a in (!apps!) do (
-      call :save_active_version %%a || if !rc! == 0 set rc=1
+    call :parse_reset_args %*
+    if defined reset_all (
+      REM Reset also repairs generated settings when the manifest and hook snapshots already
+      REM match, e.g. after a failed save. A changed-app scan would skip those repairs.
+      REM Bulk targets override named apps in Scoop; only a named reset selects another JDK.
+      for /F "delims=" %%a in ('dir /B /AD "%SCOOP%\apps\*" 2^>NUL') do if /I not "%%a" == "scoop" (
+        REM Continue saving after failures without hiding an earlier Scoop error.
+        call :save_active_version "%%a" keep_selected_jdk || if !rc! == 0 set rc=1
+      )
+    ) else (
+      for %%a in (!reset_apps!) do (
+        call :save_active_version %%a || if !rc! == 0 set rc=1
+      )
     )
 
     REM see the install block for why the exit code is passed via a FOR variable
@@ -693,7 +702,7 @@ exit /B %save_rc%
 exit /B 0
 
 :save_active_version___FAILED
-  :: A matching snapshot does not imply a complete environment, so bulk scans cannot retry this.
+  :: A matching snapshot does not imply a complete environment, so change-only scans cannot retry this.
   >&2 call :log_WARN Could not save portable settings for %app_name%. After correcting the error, run "scoop reset %app_name%".
 exit /B 1
 
@@ -1308,6 +1317,53 @@ goto :eof
     goto :filter_scoop_update_args___NEXT
 
 
+:parse_reset_args
+  :: args: <COMMAND> <ARG,...>; returns reset_all and reset_apps inside the interceptor's SETLOCAL.
+  :: SHIFT keeps "*" literal; FOR would expand even a quoted wildcard to current-directory files.
+  :: Unlike the generic flag helpers, reset must honor -- before deciding which apps to save.
+  set "reset_all="
+  set "reset_apps="
+  set "reset_options=true"
+  shift /1
+  :parse_reset_args___NEXT
+    REM Check the raw token so an empty quoted argument does not hide later targets.
+    set reset_arg=%1
+    if not defined reset_arg exit /B 0
+    set "reset_arg=%~1"
+    if "!reset_arg!" == "*" (
+      set "reset_all=true"
+    ) else (
+      if defined reset_options (
+        if "!reset_arg!" == "--" (
+          set "reset_options="
+          goto :parse_reset_args___ADVANCE
+        )
+        if /I "!reset_arg!" == "--all" (
+          set "reset_all=true"
+          goto :parse_reset_args___ADVANCE
+        )
+        if "!reset_arg:~0,1!" == "-" if not "!reset_arg!" == "-" (
+          REM Reset supports only -a, including repetitions such as -aa and uppercase -A.
+          set "reset_option=!reset_arg:~1!"
+          set "reset_option=!reset_option:a=!"
+          if defined reset_option (
+            REM Scoop rejects unknown options before resetting any app. Do not save targets
+            REM collected before that error, even if they included a bulk reset.
+            set "reset_all="
+            set "reset_apps="
+            exit /B 0
+          )
+          set "reset_all=true"
+          goto :parse_reset_args___ADVANCE
+        )
+      )
+      set reset_apps=!reset_apps! "!reset_arg!"
+    )
+    :parse_reset_args___ADVANCE
+    shift /1
+    goto :parse_reset_args___NEXT
+
+
 :has_arg
   :: args: <SEARCH_FOR> <ARG,...>
   setlocal
@@ -1641,7 +1697,7 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
 
     $savedFiles = @(Get-ChildItem -LiteralPath $envDir -File)
     $otherJdks = @($savedFiles | Where-Object { $_.Name -like '*.JAVA_HOME.env_set.cmd' -and $_.Name -ne "$AppName.JAVA_HOME.env_set.cmd" })
-    # Bulk updates must not select an unselected JDK, including one whose hook sets JAVA_HOME.
+    # Bulk updates and resets must not select an unselected JDK, including one whose hook sets JAVA_HOME.
     if ($SaveMode -eq 'keep_selected_jdk' -and $envValues.ContainsKey('JAVA_HOME') -and $otherJdks.Count) { return }
 
     # Render all outputs before touching existing files. The caller already saved
@@ -1674,7 +1730,7 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
         $index++
         $envFiles["$AppName.$index.env_add_path"] = $path
     }
-    # Writes are not transactional. Fail before pruning if a write fails; named reset
+    # Writes are not transactional. Fail before pruning if a write fails; reset
     # retries generation from the manifest and captured hook record without rerunning hooks.
     foreach ($entry in $envFiles.GetEnumerator()) {
         Set-Content -LiteralPath (Join-Path $envDir $entry.Key) -Value $entry.Value

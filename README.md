@@ -99,6 +99,10 @@ in a Command Prompt where you have loaded `scoop-portable.cmd`.
 This rebuilds the settings from the information already saved for that app.
 For a JDK, the reset also switches the active Java version to that JDK.
 
+To rebuild portable settings for all installed apps from the same saved information,
+use `scoop reset --all`, `scoop reset -a`, or `scoop reset *`.
+These bulk resets preserve the JDK selection recorded by scoop-portable.
+
 #### Errors while restoring the user PATH
 
 During `scoop update`, an app's installer can change the Windows user PATH directly.
