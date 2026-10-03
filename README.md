@@ -75,9 +75,13 @@ keeping any other flags such as `64bit` or `Held package`.
 
 #### Missing app settings after an upgrade
 
-Apps installed with an older version of scoop-portable may be missing environment settings
-that the current version needs to load for them.
-To recreate these settings, load `scoop-portable.cmd` and run `scoop update --force <app>`,
+Scoop 0.6.0 renamed its installed app metadata files.
+Older versions of scoop-portable could therefore miss app versions and environment settings.
+Replace `scoop-portable.cmd` with the current version, load it, and run `scoop reset --all`
+to rebuild the portable settings for installed apps.
+Then load `scoop-portable.cmd` again to apply the restored settings.
+
+If settings written by an app's installation hooks are still missing, run `scoop update --force <app>`,
 replacing `<app>` with the affected app's name.
 Then load `scoop-portable.cmd` again to apply the restored settings.
 

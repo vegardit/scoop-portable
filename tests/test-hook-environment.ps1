@@ -1,23 +1,25 @@
-# CI regression fixture for portable declarations, hook settings, shared search paths and saved-state ownership.
+# CI regression fixture for Scoop metadata compatibility, portable declarations, hook settings and saved-state ownership.
 # Uses Scoop's real helper bodies with a registry writer that always fails, so
 # a missing patch cannot modify the user's environment during this test.
 param([Parameter(Mandatory = $true)][string]$PortableRoot)
 
 $ErrorActionPreference = 'Stop'
 
-function Read-ScoopFunction([string]$Library, [string]$Name) {
-    $tokens = $null
-    $parseErrors = $null
-    $source = Join-Path $PortableRoot "apps\scoop\current\lib\$Library.ps1"
-    $tree = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$parseErrors)
-    if ($parseErrors) { throw "Cannot read Scoop fixture source: $source" }
-    # Take the upstream definition, before any override appended by the wrapper.
-    $definition = $tree.FindAll({
-        param($node)
-        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name
-    }, $false) | Select-Object -First 1
-    if (-not $definition) { throw "Missing Scoop fixture function: $Name" }
-    $definition.Extent.Text
+function Read-ScoopFunction([string[]]$Libraries, [string]$Name) {
+    foreach ($library in $Libraries) {
+        $tokens = $null
+        $parseErrors = $null
+        $source = Join-Path $PortableRoot "apps\scoop\current\lib\$library.ps1"
+        $tree = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors) { throw "Cannot read Scoop fixture source: $source" }
+        # Take the upstream definition, before any override appended by the wrapper.
+        $definition = $tree.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name
+        }, $false) | Select-Object -First 1
+        if ($definition) { return $definition.Extent.Text }
+    }
+    throw "Missing Scoop fixture function: $Name"
 }
 
 function Invoke-Wrapper([string]$Arguments, [int]$ExpectedExitCode = 0) {
@@ -140,7 +142,8 @@ function get_config($Name) { $false }
     @(
         Read-ScoopFunction manifest arch_specific
         Read-ScoopFunction core Get-AbsolutePath
-        Read-ScoopFunction install is_in_dir
+        # Scoop 0.6 moved the shared path-containment helper from install to core.
+        Read-ScoopFunction @('core', 'install') is_in_dir
         Read-ScoopFunction install env_add_path
         Read-ScoopFunction install env_set
         Read-ScoopFunction install env_rm
@@ -153,6 +156,82 @@ function get_config($Name) { $false }
     # Commands can source install.ps1 again in one process. The hook wrapper must
     # still delegate to upstream rather than capturing itself and recursing.
     . "$lib\install.ps1"
+
+    # App-shipped JSON may coexist with Scoop 0.6 metadata. Conflicting legacy
+    # values make both filename precedence and the installed architecture observable.
+    $metadataManifest = '{"version":"1","architecture":{"32bit":{"env_set":{"PORTABLE_TEST_METADATA":"32bit"},"env_add_path":"bin32"},"64bit":{"env_set":{"PORTABLE_TEST_METADATA":"64bit"},"env_add_path":"bin64"}}}'
+    foreach ($layout in 'legacy', 'prefixed', 'both') {
+        foreach ($architecture in '32bit', '64bit') {
+            $name = "metadata-$layout-$architecture"
+            $appDir = "$fixtureRoot\apps\$name\current"
+            New-Item -ItemType Directory -Path $appDir | Out-Null
+            $prefix = if ($layout -eq 'legacy') { '' } else { 'scoop-' }
+            $metadataManifest | Set-Content -LiteralPath "$appDir\${prefix}manifest.json"
+            @{ architecture = $architecture } | ConvertTo-Json | Set-Content -LiteralPath "$appDir\${prefix}install.json"
+            if ($layout -eq 'both') {
+                '{"version":"app-owned","env_set":{"PORTABLE_TEST_METADATA":"app-owned"}}' |
+                    Set-Content -LiteralPath "$appDir\manifest.json"
+                $otherArchitecture = if ($architecture -eq '32bit') { '64bit' } else { '32bit' }
+                @{ architecture = $otherArchitecture } | ConvertTo-Json | Set-Content -LiteralPath "$appDir\install.json"
+            }
+            Invoke-Wrapper "install --no-update-scoop $name"
+            Assert-Value (Get-Content -LiteralPath "$versions\$name.json" -Raw) `
+                (Get-Content -LiteralPath "$appDir\${prefix}manifest.json" -Raw) "$layout manifest snapshot"
+            Assert-Value (Get-Content -LiteralPath "$versions\$name.PORTABLE_TEST_METADATA.env_set.cmd" -Raw).Trim() `
+                ('@set "PORTABLE_TEST_METADATA=' + $architecture + '"') "$layout installed architecture"
+            Assert-Value (Get-Content -LiteralPath "$versions\$name.1.env_add_path" -Raw).Trim() `
+                ('bin' + $architecture.Substring(0, 2)) "$layout architecture PATH"
+        }
+    }
+
+    # Keep the old file equal to the saved snapshot: comparing the legacy filename
+    # would miss this update even if the saver itself already reads the new name.
+    $appDir = "$fixtureRoot\apps\metadata-legacy-32bit\current"
+    $metadataManifest.Replace('"version":"1"', '"version":"2"') |
+        Set-Content -LiteralPath "$appDir\scoop-manifest.json"
+    '{"architecture":"32bit"}' | Set-Content -LiteralPath "$appDir\scoop-install.json"
+    Invoke-Wrapper 'update --all'
+    Assert-Value (Get-Content -LiteralPath "$versions\metadata-legacy-32bit.json" -Raw) `
+        (Get-Content -LiteralPath "$appDir\scoop-manifest.json" -Raw) 'metadata layout transition during bulk update'
+
+    # A present but unusable prefixed file must fail, not fall back to app-owned
+    # legacy JSON or erase the last working session settings.
+    $appDir = "$fixtureRoot\apps\metadata-both-32bit\current"
+    $savedEnvironment = Get-Content -LiteralPath "$versions\metadata-both-32bit.PORTABLE_TEST_METADATA.env_set.cmd" -Raw
+    foreach ($file in 'scoop-manifest.json', 'scoop-install.json') {
+        $original = Get-Content -LiteralPath "$appDir\$file" -Raw
+        try {
+            '{"env_set":' | Set-Content -LiteralPath "$appDir\$file"
+            Invoke-Wrapper 'reset metadata-both-32bit' 1
+            Assert-Value (Get-Content -LiteralPath "$versions\metadata-both-32bit.PORTABLE_TEST_METADATA.env_set.cmd" -Raw) `
+                $savedEnvironment "preserve settings after invalid $file"
+        } finally {
+            Set-Content -LiteralPath "$appDir\$file" -Value $original -NoNewline
+        }
+    }
+    $lockedManifest = [IO.File]::Open("$appDir\scoop-manifest.json", 'Open', 'Read', 'None')
+    try {
+        Invoke-Wrapper 'reset metadata-both-32bit' 1
+        Assert-Value (Get-Content -LiteralPath "$versions\metadata-both-32bit.PORTABLE_TEST_METADATA.env_set.cmd" -Raw) `
+            $savedEnvironment 'preserve settings after an unreadable manifest'
+    } finally {
+        $lockedManifest.Dispose()
+    }
+
+    # Keep both the old marker and an existing helper. A missing helper takes a
+    # separate repair branch and would hide a forgotten patch-version bump.
+    (Get-Content -LiteralPath "$lib\system.ps1" -Raw) -replace '(?m)^# scoop-portable-patches: \d+\r?$', '# scoop-portable-patches: 7' |
+        Set-Content -LiteralPath "$lib\system.ps1"
+    "throw 'The old environment helper was not regenerated'" | Set-Content -LiteralPath "$fixtureRoot\.portable\environment.ps1"
+    Invoke-Wrapper 'reset metadata-both-32bit'
+    Assert-Value (Get-Content -LiteralPath "$versions\metadata-both-32bit.PORTABLE_TEST_METADATA.env_set.cmd" -Raw) `
+        $savedEnvironment 'regenerated helper reads prefixed installation metadata'
+
+    # App scans can encounter directories without installed metadata, including Scoop itself.
+    New-Item -ItemType Directory -Path "$fixtureRoot\apps\metadata-empty\current" | Out-Null
+    Invoke-Wrapper 'reset metadata-empty'
+    Assert-Value (Test-Path -LiteralPath "$versions\metadata-empty.json") $false 'skip missing metadata'
+    Write-Host 'Portable metadata compatibility regressions passed.'
 
     $policyFiles = @(Write-SavedState 'restricted.app')
     $policyAppDir = "$fixtureRoot\apps\restricted.save\current"

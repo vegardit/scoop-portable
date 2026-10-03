@@ -638,17 +638,30 @@ goto :eof
 
 
 
+:get_app_manifest_path
+  :: args: <APP_NAME> <RESULT_VAR>
+  :: Scoop 0.6 prefixes its metadata so it cannot overwrite JSON shipped by an app.
+  :: Both comparison and saving must prefer that file; a read failure must not select legacy JSON.
+  :: Return the legacy path even if absent, preserving the callers' missing-manifest handling.
+  set "%~2=%SCOOP%\apps\%~1\current\scoop-manifest.json"
+  if not exist "%SCOOP%\apps\%~1\current\scoop-manifest.json" set "%~2=%SCOOP%\apps\%~1\current\manifest.json"
+goto :eof
+
+
+
 :save_active_versions_of_changed_apps
   :: saves each app whose manifest or captured environment differs from its snapshots, including new apps.
   :: fc also fails for apps without a current manifest, which save_active_version then skips.
   :: keep_selected_jdk: a changed JDK must not take JAVA_HOME from the selected one, because
   :: the JDK is selected with "scoop reset <jdk>" (or by naming it in "scoop update <jdk>")
-  setlocal
+  :: The selected path changes inside the loop, so expand it after each lookup.
+  setlocal EnableDelayedExpansion
   :: Remember any failure without letting a later successful save hide it or skipping other apps.
   set "save_rc=0"
   for /F %%f in ('dir /B "%SCOOP%\apps\*" 2^>NUL') do (
     set "app_changed="
-    fc /B "%SCOOP%\apps\%%~f\current\manifest.json" "%SCOOP%\.portable\active_versions\%%~f.json" >NUL 2>&1 || set "app_changed=true"
+    call :get_app_manifest_path "%%~f" manifest_path
+    fc /B "!manifest_path!" "%SCOOP%\.portable\active_versions\%%~f.json" >NUL 2>&1 || set "app_changed=true"
     REM A forced update or reset can change captured values without changing the manifest.
     if exist "%SCOOP%\apps\%%~f\current\.scoop-portable-env.json" (
       fc /B "%SCOOP%\apps\%%~f\current\.scoop-portable-env.json" "%SCOOP%\.portable\active_versions\%%~f.env_hooks" >NUL 2>&1 || set "app_changed=true"
@@ -686,11 +699,12 @@ exit /B %save_rc%
   call :substring_before %app% @ app_name
   for %%i in ("%app_name:/=\%") do set "app_name=%%~nxi"
 
-  if not exist "%SCOOP%\apps\%app_name%\current\manifest.json" exit /B 0
+  call :get_app_manifest_path "%app_name%" manifest_path
+  if not exist "%manifest_path%" exit /B 0
 
   :: fix_paths reads this snapshot to restore the selected version after a move. Keep it
   :: current even if generating the derived environment files fails; it is not a success marker.
-  copy /Y "%SCOOP%\apps\%app_name%\current\manifest.json" "%SCOOP%\.portable\active_versions\%app_name%.json" >NUL || goto :save_active_version___FAILED
+  copy /Y "%manifest_path%" "%SCOOP%\.portable\active_versions\%app_name%.json" >NUL || goto :save_active_version___FAILED
 
   :: Hook state may be the only source of settings, e.g. Gradle has no env_set property.
   findstr /C:env_set /C:env_add_path "%SCOOP%\.portable\active_versions\%app_name%.json" >NUL
@@ -728,6 +742,7 @@ exit /B 0
   :: Shared text transformations keep stash verification tied to the patches we actually write.
   :: Cleanup applies them to a stash's own base blobs, without running any saved PowerShell code.
   :: Keep the marker in sync with ensure_scoop_patched whenever the general patches change.
+  :: It also versions the generated environment helper, so helper changes require a bump.
   :: The import guard is checked separately on every import, after any self-update.
   :: Match Scoop's comma-space-separated Info tokens and case-insensitive comparison exactly,
   :: so the guard rejects the same entries Scoop would install globally.
@@ -735,7 +750,7 @@ exit /B 0
     $shortcutFunctions = 'function create_startmenu_shortcuts($manifest, $dir, $global, $arch) {', 'function startmenu_shortcut([System.IO.FileInfo] $target, $shortcutName, $arguments, [System.IO.FileInfo]$icon, $global) {'; ^
     $envOverride = 'function Set-EnvVar { param([string]$Name, [string]$Value, [switch]$Global) }'; ^
     $hookOverride = '. \"$env:SCOOP\.portable\environment.ps1\"'; ^
-    $patchMarker = '# scoop-portable-patches: 7'; ^
+    $patchMarker = '# scoop-portable-patches: 8'; ^
     $importStart = 'foreach ($item in $import.config.PSObject.Properties) {'; ^
     $importGuard = ^
       '# scoop-portable: Imports bypass the CMD install guard. Check all apps before applying the Scoopfile.', ^
@@ -904,7 +919,7 @@ goto :eof
     call :patch_scoop
     exit /B
   )
-  findstr /L /C:"# scoop-portable-patches: 7" "%SCOOP%\apps\scoop\current\lib\system.ps1" >NUL 2>NUL || call :patch_scoop
+  findstr /L /C:"# scoop-portable-patches: 8" "%SCOOP%\apps\scoop\current\lib\system.ps1" >NUL 2>NUL || call :patch_scoop
 goto :eof
 
 
@@ -1664,7 +1679,11 @@ function Save-ScoopPortableEnvironment([string]$AppName, [string]$SaveMode) {
     # Use the installed architecture, which need not match this machine.
     $architectures = $manifest.PSObject.Properties['architecture']
     if ($architectures -and $architectures.Value) {
-        $architecture = (Get-Content -LiteralPath "$appDir\install.json" -Raw | ConvertFrom-Json).architecture
+        # Match Scoop 0.6's precedence: legacy JSON may belong to the app itself.
+        # Fall back only for absence; unreadable or invalid preferred metadata must fail.
+        $installFile = "$appDir\scoop-install.json"
+        if (-not (Test-Path -LiteralPath $installFile)) { $installFile = "$appDir\install.json" }
+        $architecture = (Get-Content -LiteralPath $installFile -Raw | ConvertFrom-Json).architecture
         $selected = $architectures.Value.PSObject.Properties[$architecture]
         if ($selected -and $selected.Value) {
             foreach ($name in 'env_set', 'env_add_path') {
